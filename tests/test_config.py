@@ -12,7 +12,7 @@ def test_defaults() -> None:
     assert settings.mteam.site_url == "https://kp.m-team.cc"
     assert settings.mteam.enabled is False
     assert settings.qbittorrent.enabled is False
-    assert settings.transport == "stdio"
+    assert settings.transport == "streamable-http"
     assert settings.port == 8000
 
 

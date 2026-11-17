@@ -147,14 +147,14 @@ class Settings:
     qbittorrent: QBittorrentConfig = field(default_factory=QBittorrentConfig)
     default_site: str = "mteam"
     default_downloader: str = "qbittorrent"
-    transport: str = "stdio"
+    transport: str = "streamable-http"
     host: str = "127.0.0.1"
     port: int = _DEFAULT_MCP_PORT
 
     @classmethod
     def from_env(cls, env: Mapping[str, str] | None = None) -> Settings:
         source = os.environ if env is None else env
-        transport = _text(source, "MCP_TRANSPORT", "stdio").lower() or "stdio"
+        transport = _text(source, "MCP_TRANSPORT", "streamable-http").lower() or "streamable-http"
         if transport not in {"stdio", "streamable-http"}:
             raise ConfigError("MCP_TRANSPORT 只能是 stdio 或 streamable-http")
         port = _positive_int(source, "MCP_PORT", _DEFAULT_MCP_PORT)

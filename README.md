@@ -117,7 +117,9 @@ UV_INDEX_URL=https://pypi.tuna.tsinghua.edu.cn/simple uv sync
         "run",
         "--directory",
         "/path/to/nas-mcp",
-        "nas-mcp"
+        "nas-mcp",
+        "--transport",
+        "stdio"
       ],
       "enabled": true
     }
@@ -138,7 +140,9 @@ UV_INDEX_URL=https://pypi.tuna.tsinghua.edu.cn/simple uv sync
         "run",
         "--directory",
         "/path/to/nas-mcp",
-        "nas-mcp"
+        "nas-mcp",
+        "--transport",
+        "stdio"
       ],
       "env": {
         "MTEAM_API_KEY": "你的 M-Team API Key",
@@ -152,12 +156,16 @@ UV_INDEX_URL=https://pypi.tuna.tsinghua.edu.cn/simple uv sync
 
 ### HTTP 模式
 
-默认 stdio。需要远程访问时：
+默认使用 `streamable-http`，直接启动即可：
 
 ```bash
-MCP_TRANSPORT=streamable-http uv run nas-mcp
-# 或
-uv run nas-mcp --transport streamable-http --host 0.0.0.0 --port 8000
+uv run nas-mcp
+```
+
+本地 MCP 客户端需要 stdio 时，显式指定：
+
+```bash
+uv run nas-mcp --transport stdio
 ```
 
 客户端连接 `http://<host>:8000/mcp`。远程暴露时请自行加认证和网络隔离。
@@ -205,7 +213,7 @@ API Key 获取位置：M-Team 控制台 → 实验室/API。
 |---|---|---|
 | `PT_DEFAULT_SITE` | `mteam` | 默认 PT 站 |
 | `DOWNLOADER_DEFAULT` | `qbittorrent` | 默认下载器 |
-| `MCP_TRANSPORT` | `stdio` | `stdio` 或 `streamable-http` |
+| `MCP_TRANSPORT` | `streamable-http` | `stdio` 或 `streamable-http` |
 | `MCP_HOST` | `127.0.0.1` | HTTP 监听地址 |
 | `MCP_PORT` | `8000` | HTTP 监听端口 |
 

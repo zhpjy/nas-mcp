@@ -9,7 +9,7 @@ description = "安装 Python 运行时和项目依赖"
 run = "uv sync --all-groups"
 
 [tasks.dev]
-description = "以 stdio 方式启动 MCP 服务"
+description = "以默认 HTTP 传输方式启动 MCP 服务"
 run = "uv run nas-mcp"
 
 [tasks.check]
