@@ -1,0 +1,49 @@
+[tools]
+python = "3.12"
+
+[env]
+UV_PYTHON = { value = "{{ tools.python.path }}", tools = true }
+
+[tasks.setup]
+description = "安装 Python 运行时和项目依赖"
+run = "uv sync --all-groups"
+
+[tasks.dev]
+description = "以 stdio 方式启动 MCP 服务"
+run = "uv run nas-mcp"
+
+[tasks.check]
+description = "静态检查（只读）"
+depends = ["check:fmt", "check:lint", "check:type"]
+
+[tasks."check:fmt"]
+description = "检查格式"
+run = "uv run ruff format --check ."
+
+[tasks."check:lint"]
+description = "运行 Ruff lint"
+run = "uv run ruff check ."
+
+[tasks."check:type"]
+description = "运行 mypy"
+run = "uv run mypy src"
+
+[tasks.fix]
+description = "自动修复格式和可修复的 lint 问题"
+run = "uv run ruff format . && uv run ruff check --fix ."
+
+[tasks.test]
+description = "运行测试"
+run = "uv run pytest -q"
+
+[tasks.build]
+description = "构建 wheel 和 sdist"
+run = "uv build"
+
+[tasks.verify]
+description = "提交前完整验证"
+depends = ["check", "test", "build"]
+
+[tasks.clean]
+description = "清理构建产物和缓存"
+run = "rm -rf dist build .pytest_cache .mypy_cache .ruff_cache"

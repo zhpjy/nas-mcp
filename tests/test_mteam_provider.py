@@ -1,0 +1,199 @@
+from __future__ import annotations
+
+import json
+from collections.abc import Callable
+from typing import Any
+
+import httpx2
+import pytest
+
+from nas_mcp.config import MTeamConfig
+from nas_mcp.errors import ProviderError
+from nas_mcp.providers.mteam import MTeamProvider
+
+from .helpers import make_torrent
+
+
+def make_provider(
+    handler: Callable[[httpx2.Request], httpx2.Response],
+    *,
+    max_torrent_bytes: int = 1024 * 1024,
+) -> MTeamProvider:
+    return MTeamProvider(
+        MTeamConfig(
+            api_key="test-key",
+            api_base="https://api.m-team.cc/api",
+            site_url="https://kp.m-team.cc",
+            timeout=5,
+            max_torrent_bytes=max_torrent_bytes,
+        ),
+        transport=httpx2.MockTransport(handler),
+    )
+
+
+async def test_search_normalizes_and_sends_filters() -> None:
+    seen: list[httpx2.Request] = []
+
+    def handler(request: httpx2.Request) -> httpx2.Response:
+        seen.append(request)
+        body = json.loads(request.content)
+        assert body["keyword"] == "沙丘"
+        assert body["mode"] == "normal"
+        assert "419" in body["categories"]
+        assert body["sortField"] == "SEEDERS"
+        return httpx2.Response(
+            200,
+            json={
+                "code": "0",
+                "message": "SUCCESS",
+                "data": {
+                    "pageNumber": 1,
+                    "pageSize": 20,
+                    "total": 1,
+                    "totalPages": 1,
+                    "data": [
+                        {
+                            "id": "1125330",
+                            "name": "Dune 2024 2160p",
+                            "size": "1073741824",
+                            "category": "419",
+                            "labelsNew": ["中字", "4k"],
+                            "createdDate": "2026-01-01 12:00:00",
+                            "status": {
+                                "seeders": "42",
+                                "leechers": "3",
+                                "timesCompleted": "128",
+                                "discount": "FREE",
+                            },
+                        }
+                    ],
+                },
+            },
+        )
+
+    page = await make_provider(handler).search(
+        keyword="沙丘",
+        page=1,
+        page_size=20,
+        categories=["电影"],
+        sort_by="seeders",
+    )
+
+    assert seen[0].headers["x-api-key"] == "test-key"
+    assert seen[0].headers["origin"] == "https://kp.m-team.cc"
+    assert page.total == 1
+    item = page.items[0]
+    assert item.id == "1125330"
+    assert item.size_bytes == 1073741824
+    assert item.seeders == 42
+    assert item.category_name == "电影/HD"
+    assert item.discount == "FREE"
+    assert item.tags == ("中字", "4k")
+    first_result = page.to_dict()["results"][0]
+    assert first_result["index"] == 1
+    assert first_result["size"] == "1 GiB"
+
+
+async def test_search_accepts_traditional_chinese_category() -> None:
+    seen: list[dict[str, Any]] = []
+
+    def handler(request: httpx2.Request) -> httpx2.Response:
+        seen.append(json.loads(request.content))
+        return httpx2.Response(200, json={"code": "0", "data": {"data": []}})
+
+    await make_provider(handler).search("沙丘", 1, 20, ["電影"], "seeders")
+
+    assert "419" in seen[0]["categories"]
+    assert seen[0]["mode"] == "normal"
+
+
+async def test_search_surfaces_api_error() -> None:
+    def handler(_: httpx2.Request) -> httpx2.Response:
+        return httpx2.Response(200, json={"code": "1", "message": "API Key 错误"})
+
+    with pytest.raises(ProviderError, match="API Key 错误"):
+        await make_provider(handler).search("test", 1, 20, None, "seeders")
+
+
+async def test_search_rejects_unknown_category() -> None:
+    provider = make_provider(lambda _: httpx2.Response(200, json={"code": "0", "data": {}}))
+    with pytest.raises(ProviderError, match="未知分类"):
+        await provider.search("test", 1, 20, ["不存在的分类"], "seeders")
+
+
+async def test_search_rejects_mixed_adult_and_normal_categories() -> None:
+    provider = make_provider(lambda _: httpx2.Response(200, json={"code": "0", "data": {}}))
+    with pytest.raises(ProviderError, match="不能同时选择"):
+        await provider.search("test", 1, 20, ["电影", "成人"], "seeders")
+
+
+async def test_download_fetches_token_and_torrent_without_api_key() -> None:
+    content, expected_hash = make_torrent()
+    calls: list[httpx2.Request] = []
+
+    def handler(request: httpx2.Request) -> httpx2.Response:
+        calls.append(request)
+        if request.url.path == "/api/torrent/genDlToken":
+            assert request.url.params["id"] == "123"
+            return httpx2.Response(
+                200,
+                json={"code": "0", "data": "https://download.example/t.torrent"},
+            )
+        if request.url.host == "download.example":
+            assert "x-api-key" not in request.headers
+            return httpx2.Response(
+                200,
+                content=content,
+                headers={"content-type": "application/x-bittorrent"},
+            )
+        raise AssertionError(f"unexpected request: {request.url}")
+
+    torrent = await make_provider(handler).download("123")
+
+    assert torrent.content == content
+    assert torrent.infohash == expected_hash
+    assert torrent.name == "Test Torrent"
+    assert torrent.filename == "123.torrent"
+    assert calls[1].url.host == "download.example"
+
+
+async def test_download_rejects_oversized_torrent() -> None:
+    def handler(request: httpx2.Request) -> httpx2.Response:
+        if request.url.path == "/api/torrent/genDlToken":
+            return httpx2.Response(200, json={"code": "0", "data": "https://download.example/t"})
+        return httpx2.Response(200, content=b"x" * 100)
+
+    with pytest.raises(ProviderError, match="超过大小限制"):
+        await make_provider(handler, max_torrent_bytes=10).download("123")
+
+
+async def test_download_rejects_non_torrent_content() -> None:
+    def handler(request: httpx2.Request) -> httpx2.Response:
+        if request.url.path == "/api/torrent/genDlToken":
+            return httpx2.Response(200, json={"code": "0", "data": "https://download.example/t"})
+        return httpx2.Response(200, content=b'{"code":"1","message":"expired"}')
+
+    with pytest.raises(ProviderError, match="错误信息"):
+        await make_provider(handler).download("123")
+
+
+async def test_check_connectivity() -> None:
+    def handler(request: httpx2.Request) -> httpx2.Response:
+        assert request.url.path == "/api/member/profile"
+        return httpx2.Response(200, json={"code": "0", "data": {"id": "1"}})
+
+    result = await make_provider(handler).check_connectivity()
+    assert result["ok"] is True
+
+
+def test_validate_torrent_id() -> None:
+    provider = make_provider(lambda _: httpx2.Response(200, json={}))
+    provider.validate_torrent_id("123")
+    with pytest.raises(ProviderError):
+        provider.validate_torrent_id("abc")
+
+
+def test_status_info_has_no_secret() -> None:
+    info: dict[str, Any] = make_provider(lambda _: httpx2.Response(200, json={})).status_info()
+    assert info["api_key_configured"] is True
+    assert "test-key" not in json.dumps(info)
