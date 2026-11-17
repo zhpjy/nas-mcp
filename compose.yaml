@@ -1,0 +1,21 @@
+services:
+  nas-mcp:
+    build: .
+    image: nas-mcp:local
+    container_name: nas-mcp
+    restart: unless-stopped
+    init: true
+    env_file:
+      - .env
+    environment:
+      MCP_TRANSPORT: streamable-http
+      # 容器内必须监听 0.0.0.0，否则宿主机端口映射无法访问
+      MCP_HOST: 0.0.0.0
+      MCP_PORT: "8000"
+      # 若 qBittorrent 运行在同一台宿主机上，.env 中的 QBITTORRENT_URL
+      # 要改成 http://host.docker.internal:8080（容器内的 127.0.0.1 是容器自己）
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+    ports:
+      # 只绑定本机，前面用带认证的反向代理暴露；局域网直连改成 "8000:8000"
+      - "127.0.0.1:8000:8000"
