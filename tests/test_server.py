@@ -55,12 +55,41 @@ async def test_custom_instructions_are_appended() -> None:
 
 
 class FakeService:
+    async def search_torrents(self, **kwargs: Any) -> dict[str, Any]:
+        return {"items": [], "total": 0, "keyword": kwargs["keyword"]}
+
     async def get_config_status(self, check_connectivity: bool = False) -> dict[str, Any]:
         return {
             "ready": False,
             "check_connectivity": check_connectivity,
             "missing": ["mteam.api_key"],
         }
+
+
+async def test_search_tool_logs_keyword_and_result(
+    caplog: pytest.LogCaptureFixture, monkeypatch: Any
+) -> None:
+    monkeypatch.setattr(server_module, "get_service", lambda: FakeService())
+    caplog.set_level("INFO", logger="nas_mcp.server")
+
+    async with Client(mcp) as client:
+        await client.call_tool(
+            "search_torrents", {"keyword": "https://pt.example/search?q=private-token"}
+        )
+
+    messages = [record.getMessage() for record in caplog.records]
+    assert any(
+        "tool=search_torrents" in message and "returned=0" in message for message in messages
+    )
+    assert any("https://pt.example/search" in message for message in messages)
+    assert all("private-token" not in message for message in messages)
+    call_ids = {
+        part.split("=", 1)[1]
+        for message in messages
+        for part in message.split()
+        if part.startswith("call_id=")
+    }
+    assert len(call_ids) == 1
 
 
 async def test_get_config_status_tool(monkeypatch: Any) -> None:

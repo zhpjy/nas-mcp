@@ -3,6 +3,8 @@
 from __future__ import annotations
 
 import asyncio
+import logging
+import time
 from collections.abc import Mapping
 from typing import Any
 
@@ -16,11 +18,13 @@ from .formatting import (
     normalize_status_filter,
     state_priority,
 )
+from .logging_setup import current_call_id, elapsed_ms, safe_log_text
 from .models import DownloadTask
 from .providers import build_providers
 from .providers.base import PTProvider
 
 _ALLOWED_STATUS = "all、downloading、seeding、completed、stopped、error"
+logger = logging.getLogger(__name__)
 
 
 class NasService:
@@ -151,10 +155,21 @@ class NasService:
         results: list[dict[str, Any]] = []
         for torrent_id in ids:
             torrent = None
+            stage = "fetch_torrent"
+            started = time.perf_counter()
             try:
                 torrent = await provider.download(torrent_id)
+                stage = "add_to_qbittorrent"
                 outcome = await downloader.add_torrent(torrent, category=category)
             except NasMcpError as exc:
+                logger.warning(
+                    "torrent_failed call_id=%s torrent_id=%s stage=%s error=%s elapsed_ms=%d",
+                    current_call_id(),
+                    torrent_id,
+                    stage,
+                    safe_log_text(str(exc)),
+                    elapsed_ms(started),
+                )
                 results.append(
                     {
                         "torrent_id": torrent_id,
@@ -165,6 +180,14 @@ class NasService:
                     }
                 )
             else:
+                logger.info(
+                    "torrent_added call_id=%s torrent_id=%s hash=%s category=%s elapsed_ms=%d",
+                    current_call_id(),
+                    torrent_id,
+                    outcome.infohash,
+                    category or "default",
+                    elapsed_ms(started),
+                )
                 results.append(
                     {
                         "torrent_id": torrent_id,

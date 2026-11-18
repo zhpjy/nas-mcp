@@ -198,6 +198,19 @@ mcp:
 
 启动参数 `--config`、`--transport`、`--host`、`--port` 可以覆盖配置文件中的对应值。
 
+## 日志
+
+服务日志统一写到 `stderr`，不会污染 stdio MCP 协议的 `stdout`。默认级别是 `INFO`，
+设置 `NAS_MCP_LOG_LEVEL=DEBUG` 可查看调试日志。日志记录启动配置来源、工具调用参数摘要、
+搜索关键词与结果数、下载各阶段、重试次数和耗时；每次调用带有 `call_id`。
+日志不会输出 API Key、密码、access key，也会移除 URL 查询参数（包括临时下载令牌）。
+
+Docker 查看日志：
+
+```bash
+docker compose logs -f nas-mcp
+```
+
 ## 安全说明
 
 - `config.yaml` 不要提交。本地使用建议权限 `600`；Docker 部署时需确保容器用户可读。

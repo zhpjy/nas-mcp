@@ -3,8 +3,10 @@
 from __future__ import annotations
 
 import asyncio
+import logging
 import math
 import re
+import time
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
 from typing import Any
@@ -14,6 +16,7 @@ import httpx2
 
 from ..config import MTeamConfig
 from ..errors import ProviderError
+from ..logging_setup import current_call_id, elapsed_ms, safe_log_text
 from ..models import Category, SearchPage, TorrentFile, TorrentItem
 from ..torrent_utils import BencodeError, validate_torrent
 from .base import PTProvider
@@ -25,9 +28,15 @@ _DOWNLOAD_RETRIES = 5
 _DOWNLOAD_RETRY_DELAY = 0.5
 _DOWNLOAD_RETRY_MAX_DELAY = 3.0
 
+logger = logging.getLogger(__name__)
+
 
 class _RetryableDownloadError(ProviderError):
     """下载链路的瞬时错误，由服务端重试，不透传给 agent。"""
+
+    def __init__(self, stage: str, message: str) -> None:
+        super().__init__(message)
+        self.stage = stage
 
 
 _HTTP_ERROR_LABELS = {
@@ -47,7 +56,7 @@ def _describe_http_error(exc: httpx2.HTTPError) -> str:
     """httpx2 的网络异常经常没有 message，补一个可读描述。"""
     message = str(exc).strip()
     if message:
-        return message
+        return safe_log_text(message)
     return _HTTP_ERROR_LABELS.get(type(exc).__name__, type(exc).__name__)
 
 
@@ -494,14 +503,48 @@ class MTeamProvider(PTProvider):
         self._require_enabled()
         self.validate_torrent_id(torrent_id)
         last_error: ProviderError | None = None
+        started = time.perf_counter()
+        call_id = current_call_id()
         for attempt in range(_DOWNLOAD_RETRIES + 1):
             try:
-                return await self._download_once(torrent_id)
+                torrent = await self._download_once(torrent_id)
             except _RetryableDownloadError as exc:
                 last_error = exc
                 if attempt < _DOWNLOAD_RETRIES:
+                    delay = _retry_delay(attempt)
+                    logger.warning(
+                        "download_retry call_id=%s torrent_id=%s stage=%s error=%s "
+                        "attempt=%d/%d next_delay_s=%.1f",
+                        call_id,
+                        torrent_id,
+                        exc.stage,
+                        safe_log_text(str(exc)),
+                        attempt + 1,
+                        _DOWNLOAD_RETRIES,
+                        delay,
+                    )
                     # 临时链接过期或网络抖动时，重新申请链接再试
-                    await asyncio.sleep(_retry_delay(attempt))
+                    await asyncio.sleep(delay)
+                    continue
+                logger.error(
+                    "download_failed call_id=%s torrent_id=%s stage=%s attempts=%d error=%s",
+                    call_id,
+                    torrent_id,
+                    exc.stage,
+                    attempt + 1,
+                    safe_log_text(str(exc)),
+                )
+                break
+            else:
+                logger.info(
+                    "torrent_fetched call_id=%s torrent_id=%s attempts=%d bytes=%d elapsed_ms=%d",
+                    call_id,
+                    torrent_id,
+                    attempt + 1,
+                    len(torrent.content),
+                    elapsed_ms(started),
+                )
+                return torrent
         assert last_error is not None
         raise ProviderError(f"{last_error}（已自动重试 {_DOWNLOAD_RETRIES} 次）") from last_error
 
@@ -512,10 +555,12 @@ class MTeamProvider(PTProvider):
                 response = await client.post("torrent/genDlToken", params={"id": torrent_id})
         except httpx2.HTTPError as exc:
             raise _RetryableDownloadError(
-                f"获取 M-Team 下载链接失败：{_describe_http_error(exc)}"
+                "fetch_token", f"获取 M-Team 下载链接失败：{_describe_http_error(exc)}"
             ) from exc
         if response.status_code == 429 or response.status_code >= 500:
-            raise _RetryableDownloadError(f"获取 M-Team 下载链接失败：HTTP {response.status_code}")
+            raise _RetryableDownloadError(
+                "fetch_token", f"获取 M-Team 下载链接失败：HTTP {response.status_code}"
+            )
         token_data = self._parse_response(response, "M-Team API 请求失败")
         download_url = self._extract_download_url(token_data)
         if not download_url:
@@ -541,11 +586,12 @@ class MTeamProvider(PTProvider):
             ):
                 if response.status_code in {401, 403}:
                     raise _RetryableDownloadError(
-                        f"下载 M-Team 种子失败：HTTP {response.status_code}，临时链接可能已过期"
+                        "fetch_torrent",
+                        f"下载 M-Team 种子失败：HTTP {response.status_code}，临时链接可能已过期",
                     )
                 if response.status_code == 429 or response.status_code >= 500:
                     raise _RetryableDownloadError(
-                        f"下载 M-Team 种子失败：HTTP {response.status_code}"
+                        "fetch_torrent", f"下载 M-Team 种子失败：HTTP {response.status_code}"
                     )
                 if response.status_code >= 400:
                     raise ProviderError(f"下载 M-Team 种子失败：HTTP {response.status_code}")
@@ -569,12 +615,12 @@ class MTeamProvider(PTProvider):
                 content = b"".join(chunks)
         except httpx2.HTTPError as exc:
             raise _RetryableDownloadError(
-                f"下载 M-Team 种子失败：{_describe_http_error(exc)}"
+                "fetch_torrent", f"下载 M-Team 种子失败：{_describe_http_error(exc)}"
             ) from exc
 
         if content.lstrip().startswith(b"{"):
             # 链接失效时上游可能用 200 返回 JSON 错误，重新申请链接再试
-            raise _RetryableDownloadError("M-Team 返回的是错误信息而不是种子文件")
+            raise _RetryableDownloadError("fetch_torrent", "M-Team 返回的是错误信息而不是种子文件")
         try:
             metadata = validate_torrent(content)
         except BencodeError as exc:

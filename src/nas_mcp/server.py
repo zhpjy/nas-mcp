@@ -4,7 +4,10 @@ from __future__ import annotations
 
 import argparse
 import asyncio
+import logging
+import os
 import sys
+import time
 from collections.abc import Sequence
 from dataclasses import replace
 from functools import lru_cache
@@ -16,6 +19,7 @@ from mcp.server.mcpserver.exceptions import ToolError
 from mcp.shared.exceptions import MCPError
 from starlette.applications import Starlette
 
+from . import __version__
 from .access import (
     AccessKeyASGIMiddleware,
     AccessKeyRegistry,
@@ -26,7 +30,18 @@ from .access import (
 )
 from .config import Settings
 from .errors import ConfigError, NasMcpError
+from .logging_setup import (
+    bind_call_id,
+    configure_logging,
+    elapsed_ms,
+    new_call_id,
+)
+from .logging_setup import (
+    safe_log_text as _redact_log_text,
+)
 from .service import NasService
+
+logger = logging.getLogger(__name__)
 
 _INSTRUCTIONS = (
     "NAS 下载助手：搜索 PT 种子并推送到 qBittorrent。"
@@ -39,6 +54,17 @@ _INSTRUCTIONS = (
     "不要编造种子 ID，不要向用户展示 API Key、密码、access key 或临时下载地址。"
     "download_torrents 只在服务端内部获取种子并上传，不会返回种子文件。"
 )
+
+
+def _safe_log_text(value: str, limit: int = 200) -> str:
+    return _redact_log_text(value.strip(), limit=limit)
+
+
+def _safe_log_values(values: Sequence[str], limit: int = 20) -> str:
+    sample = [_safe_log_text(str(value), limit=80) for value in values[:limit]]
+    suffix = ",…" if len(values) > limit else ""
+    return f"[{', '.join(sample)}{suffix}]"
+
 
 _settings: Settings | None = None
 _registry: AccessKeyRegistry | None = None
@@ -100,6 +126,10 @@ class AdultAccessMiddleware:
                 fallback=current_adult_enabled_value(),
             )
         except UnauthorizedError as exc:
+            logger.warning(
+                "request_rejected call_id=%s reason=unauthorized transport=streamable-http",
+                new_call_id(),
+            )
             raise MCPError(code=-32001, message="Unauthorized") from exc
         with adult_enabled_scope(adult_enabled):
             return await call_next(ctx)
@@ -142,16 +172,46 @@ async def search_torrents(
         categories: 可选分类，可传中文名（电影、剧集、动画等）或分类 ID。
         sort_by: 排序方式：time、seeders、leechers、size、completed。
     """
-    try:
-        return await get_service().search_torrents(
-            keyword=keyword,
-            page=page,
-            page_size=page_size,
-            categories=categories,
-            sort_by=sort_by,
-        )
-    except NasMcpError as exc:
-        raise ToolError(str(exc)) from exc
+    call_id = new_call_id()
+    started = time.perf_counter()
+    logger.info(
+        "tool_call call_id=%s tool=search_torrents keyword=%r categories=%s sort_by=%s "
+        "page=%d page_size=%d",
+        call_id,
+        _safe_log_text(keyword),
+        _safe_log_values(categories) if categories is not None else None,
+        sort_by,
+        page,
+        page_size,
+    )
+    with bind_call_id(call_id):
+        try:
+            result = await get_service().search_torrents(
+                keyword=keyword,
+                page=page,
+                page_size=page_size,
+                categories=categories,
+                sort_by=sort_by,
+            )
+        except NasMcpError as exc:
+            logger.warning(
+                "tool_error call_id=%s tool=search_torrents stage=search error_type=%s "
+                "elapsed_ms=%d error=%s",
+                call_id,
+                type(exc).__name__,
+                elapsed_ms(started),
+                _redact_log_text(str(exc)),
+            )
+            raise ToolError(str(exc)) from exc
+
+    logger.info(
+        "tool_result call_id=%s tool=search_torrents returned=%d total=%s elapsed_ms=%d",
+        call_id,
+        len(result.get("items") or []),
+        result.get("total"),
+        elapsed_ms(started),
+    )
+    return result
 
 
 @mcp.tool()
@@ -165,19 +225,73 @@ async def download_torrents(
     可选 category 应来自 list_download_categories；未指定时使用配置的默认分类。
     服务端会获取 .torrent 并直接上传到 qBittorrent，不保存、不返回种子文件。
     """
-    try:
-        return await get_service().download_torrents(torrent_ids, category=category)
-    except NasMcpError as exc:
-        raise ToolError(str(exc)) from exc
+    call_id = new_call_id()
+    started = time.perf_counter()
+    logger.info(
+        "tool_call call_id=%s tool=download_torrents count=%d torrent_ids=%s category=%r",
+        call_id,
+        len(torrent_ids),
+        _safe_log_values(torrent_ids),
+        _safe_log_text(category) if category is not None else None,
+    )
+    with bind_call_id(call_id):
+        try:
+            result = await get_service().download_torrents(torrent_ids, category=category)
+        except NasMcpError as exc:
+            logger.warning(
+                "tool_error call_id=%s tool=download_torrents elapsed_ms=%d error=%s",
+                call_id,
+                elapsed_ms(started),
+                _redact_log_text(str(exc)),
+            )
+            raise ToolError(str(exc)) from exc
+
+    results = result.get("results") or []
+    failed = [item for item in results if not item.get("ok")]
+    if not failed:
+        outcome = "all_ok"
+    elif len(failed) == len(results):
+        outcome = "all_failed"
+    else:
+        outcome = "partial"
+    logger.log(
+        logging.WARNING if failed else logging.INFO,
+        "tool_result call_id=%s tool=download_torrents outcome=%s succeeded=%d failed=%d "
+        "elapsed_ms=%d",
+        call_id,
+        outcome,
+        len(results) - len(failed),
+        len(failed),
+        elapsed_ms(started),
+    )
+    return result
 
 
 @mcp.tool()
 async def list_download_categories() -> dict[str, Any]:
     """列出 qBittorrent 中已有的分类，供 download_torrents 的 category 参数选择。"""
-    try:
-        return await get_service().list_download_categories()
-    except NasMcpError as exc:
-        raise ToolError(str(exc)) from exc
+    call_id = new_call_id()
+    started = time.perf_counter()
+    logger.info("tool_call call_id=%s tool=list_download_categories", call_id)
+    with bind_call_id(call_id):
+        try:
+            result = await get_service().list_download_categories()
+        except NasMcpError as exc:
+            logger.warning(
+                "tool_error call_id=%s tool=list_download_categories elapsed_ms=%d error=%s",
+                call_id,
+                elapsed_ms(started),
+                _redact_log_text(str(exc)),
+            )
+            raise ToolError(str(exc)) from exc
+
+    logger.info(
+        "tool_result call_id=%s tool=list_download_categories returned=%d elapsed_ms=%d",
+        call_id,
+        len(result.get("categories") or []),
+        elapsed_ms(started),
+    )
+    return result
 
 
 @mcp.tool()
@@ -192,14 +306,39 @@ async def list_downloads(
     status 可选 all、downloading、seeding、completed、stopped、error，也接受中文。
     limit 控制返回任务数量，1 到 200。
     """
-    try:
-        return await get_service().list_downloads(
-            status=status,
-            torrent_hash=hash,
-            limit=limit,
-        )
-    except NasMcpError as exc:
-        raise ToolError(str(exc)) from exc
+    call_id = new_call_id()
+    started = time.perf_counter()
+    logger.info(
+        "tool_call call_id=%s tool=list_downloads status=%s hash=%s limit=%d",
+        call_id,
+        _safe_log_text(status),
+        _safe_log_text(hash) if hash is not None else None,
+        limit,
+    )
+    with bind_call_id(call_id):
+        try:
+            result = await get_service().list_downloads(
+                status=status,
+                torrent_hash=hash,
+                limit=limit,
+            )
+        except NasMcpError as exc:
+            logger.warning(
+                "tool_error call_id=%s tool=list_downloads elapsed_ms=%d error=%s",
+                call_id,
+                elapsed_ms(started),
+                _redact_log_text(str(exc)),
+            )
+            raise ToolError(str(exc)) from exc
+
+    logger.info(
+        "tool_result call_id=%s tool=list_downloads returned=%s total=%s elapsed_ms=%d",
+        call_id,
+        result.get("count"),
+        (result.get("summary") or {}).get("total"),
+        elapsed_ms(started),
+    )
+    return result
 
 
 @mcp.tool()
@@ -210,10 +349,33 @@ async def get_config_status(check_connectivity: bool = False) -> dict[str, Any]:
     check_connectivity=true 时会验证 M-Team API Key、qBittorrent 登录和分类，
     可能稍慢。用户首次配置、询问配置或排查连接问题时使用。
     """
-    try:
-        return await get_service().get_config_status(check_connectivity=check_connectivity)
-    except NasMcpError as exc:
-        raise ToolError(str(exc)) from exc
+    call_id = new_call_id()
+    started = time.perf_counter()
+    logger.info(
+        "tool_call call_id=%s tool=get_config_status check_connectivity=%s",
+        call_id,
+        check_connectivity,
+    )
+    with bind_call_id(call_id):
+        try:
+            result = await get_service().get_config_status(check_connectivity=check_connectivity)
+        except NasMcpError as exc:
+            logger.warning(
+                "tool_error call_id=%s tool=get_config_status elapsed_ms=%d error=%s",
+                call_id,
+                elapsed_ms(started),
+                _redact_log_text(str(exc)),
+            )
+            raise ToolError(str(exc)) from exc
+
+    logger.info(
+        "tool_result call_id=%s tool=get_config_status ready=%s missing=%d elapsed_ms=%d",
+        call_id,
+        bool(result.get("ready")),
+        len(result.get("missing") or []),
+        elapsed_ms(started),
+    )
+    return result
 
 
 def _print_check(status: dict[str, Any], settings: Settings) -> int:
@@ -280,6 +442,7 @@ def create_http_app(settings: Settings) -> Starlette:
 
 
 def main(argv: Sequence[str] | None = None) -> int:
+    configure_logging()
     parser = argparse.ArgumentParser(prog="nas-mcp", description="PT 搜索与 qBittorrent 下载 MCP")
     parser.add_argument("--config", help="配置文件路径，默认 config.yaml")
     parser.add_argument("--check", action="store_true", help="检查配置和连接后退出")
@@ -303,10 +466,23 @@ def main(argv: Sequence[str] | None = None) -> int:
                 raise ConfigError(f"mcp.port 超出范围：{args.port}")
             settings = replace(settings, port=args.port)
     except ConfigError as exc:
+        logger.error("startup_failed stage=load_config error=%s", _redact_log_text(str(exc)))
         print(f"配置错误：{exc}", file=sys.stderr)
         return 2
 
     configure_settings(settings)
+    config_source = str(settings.config_path) if settings.config_path is not None else "default"
+    logger.info(
+        "startup version=%s transport=%s host=%s port=%d config_source=%s "
+        "http_auth=%s log_level=%s",
+        __version__,
+        settings.transport,
+        settings.host if settings.transport == "streamable-http" else "-",
+        settings.port,
+        config_source,
+        settings.access_keys_enabled,
+        os.environ.get("NAS_MCP_LOG_LEVEL", "INFO").upper(),
+    )
 
     if args.check:
         service = NasService.from_settings(settings)

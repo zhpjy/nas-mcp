@@ -9,6 +9,7 @@ import pytest
 
 from nas_mcp.config import MTeamConfig
 from nas_mcp.errors import ProviderError
+from nas_mcp.logging_setup import bind_call_id
 from nas_mcp.providers import mteam as mteam_module
 from nas_mcp.providers.mteam import MTeamProvider
 
@@ -330,8 +331,11 @@ async def test_download_rejects_non_torrent_content(
         await make_provider(handler).download("123")
 
 
-async def test_download_retries_network_error(monkeypatch: pytest.MonkeyPatch) -> None:
+async def test_download_retries_network_error(
+    monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture
+) -> None:
     monkeypatch.setattr(mteam_module, "_DOWNLOAD_RETRY_DELAY", 0)
+    caplog.set_level("WARNING", logger="nas_mcp.providers.mteam")
     content, expected_hash = make_torrent()
     download_calls = 0
 
@@ -344,10 +348,18 @@ async def test_download_retries_network_error(monkeypatch: pytest.MonkeyPatch) -
             raise httpx2.ConnectError("")
         return httpx2.Response(200, content=content)
 
-    torrent = await make_provider(handler).download("123")
+    with bind_call_id("download-test"):
+        torrent = await make_provider(handler).download("123")
 
     assert torrent.infohash == expected_hash
     assert download_calls == 2
+    messages = [record.getMessage() for record in caplog.records]
+    assert any(
+        "call_id=download-test" in message
+        and "stage=fetch_torrent" in message
+        and "attempt=1/5" in message
+        for message in messages
+    )
 
 
 async def test_download_retries_expired_link(monkeypatch: pytest.MonkeyPatch) -> None:

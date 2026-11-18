@@ -20,6 +20,7 @@ chmod 644 config.yaml   # 容器内以 uid 10001 运行，需要可读
 # 编辑 config.yaml，填入 mteam.api_key 和 qbittorrent 配置
 docker compose up -d --build
 docker compose exec nas-mcp nas-mcp --check
+docker compose logs -f nas-mcp
 ```
 
 `compose.yaml` 以 `streamable-http` 监听容器内 `0.0.0.0:8000`，默认只映射到宿主机
@@ -37,7 +38,7 @@ qBittorrent 在宿主机上时，`qbittorrent.url` 要填 `http://host.docker.in
 并挂到 GitHub Release，用 `uvx` 直接安装：
 
 ```bash
-uvx --from https://github.com/zhpjy/nas-mcp/releases/download/v0.2.4/nas_mcp-0.2.4-py3-none-any.whl \
+uvx --from https://github.com/zhpjy/nas-mcp/releases/download/v0.2.5/nas_mcp-0.2.5-py3-none-any.whl \
   nas-mcp --check
 ```
 
@@ -69,8 +70,8 @@ chmod 600 ~/.config/nas-mcp/config.yaml
 export NAS_MCP_MTEAM_API_KEY="<mteam-api-key>"
 export NAS_MCP_QBITTORRENT_URL="http://192.168.1.10:8080"
 export NAS_MCP_QBITTORRENT_USERNAME="admin"
-export NAS_MCP_QBITTORRENT_PASSWORD="<password>"
-uvx --from https://github.com/zhpjy/nas-mcp/releases/download/v0.2.4/nas_mcp-0.2.4-py3-none-any.whl \
+export NAS_MCP_QBITTORRENT_PASSWORD="<qbt-passphrase>"
+uvx --from https://github.com/zhpjy/nas-mcp/releases/download/v0.2.5/nas_mcp-0.2.5-py3-none-any.whl \
   nas-mcp --transport stdio
 ```
 

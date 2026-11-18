@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import hashlib
+import logging
 from collections.abc import Iterator, Mapping
 from contextlib import contextmanager
 from contextvars import ContextVar, Token
@@ -11,6 +12,9 @@ from starlette.responses import JSONResponse
 from starlette.types import ASGIApp, Receive, Scope, Send
 
 from .config import AccessKeyConfig, Settings
+from .logging_setup import new_call_id
+
+logger = logging.getLogger(__name__)
 
 _current_adult_enabled: ContextVar[bool | None] = ContextVar("nas_mcp_adult_enabled", default=None)
 
@@ -117,6 +121,10 @@ class AccessKeyASGIMiddleware:
 
         access_key = self.registry.resolve_headers(_scope_headers(scope))
         if access_key is None:
+            logger.warning(
+                "request_rejected call_id=%s reason=unauthorized transport=streamable-http",
+                new_call_id(),
+            )
             response = JSONResponse(
                 {"error": "unauthorized"},
                 status_code=401,
