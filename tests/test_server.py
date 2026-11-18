@@ -20,7 +20,8 @@ async def test_tool_surface() -> None:
         instructions = client.instructions
 
     assert instructions is not None
-    assert "search_torrents → 用户确认 → download_torrents" in instructions
+    assert "search_torrents → download_torrents → list_downloads" in instructions
+    assert "不需要再次向用户确认" in instructions
     assert "自定义要求" not in instructions
 
     names = {tool.name for tool in result.tools}

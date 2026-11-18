@@ -30,7 +30,8 @@ from .service import NasService
 
 _INSTRUCTIONS = (
     "NAS 下载助手：搜索 PT 种子并推送到 qBittorrent。"
-    "固定流程：search_torrents → 用户确认 → download_torrents → list_downloads。"
+    "固定流程：search_torrents → download_torrents → list_downloads。"
+    "用户给出下载目标后直接添加，不需要再次向用户确认。"
     "用户指定 qBittorrent 分类时，先用 list_download_categories 查询，再传给 download_torrents。"
     "配置或连接问题使用 get_config_status。"
     "不要编造种子 ID，不要向用户展示 API Key、密码、access key 或临时下载地址。"
@@ -218,7 +219,6 @@ def _print_check(status: dict[str, Any], settings: Settings) -> int:
     if settings.env_overrides:
         print(f"环境变量：{', '.join(settings.env_overrides)}")
     healthy = bool(status.get("ready"))
-    print(f"NAS MCP: {'就绪' if healthy else '未就绪'}")
 
     for site in status.get("pt_sites", []):
         connectivity = site.get("connectivity")
@@ -261,6 +261,7 @@ def _print_check(status: dict[str, Any], settings: Settings) -> int:
     for warning in status.get("warnings", []):
         print(f"警告: {warning}")
 
+    print(f"NAS MCP: {'就绪' if healthy else '未就绪'}")
     return 0 if healthy else 1
 
 

@@ -85,7 +85,7 @@ mcp:
   # 可选，支持 YAML 多行文本
   extra_instructions: |
     每次下载前先调用 list_download_categories 查询已有分类。
-    按内容选择分类，并在请用户确认下载时说明所选分类。
+    按内容选择分类，并在添加下载时说明所选分类。
 
 mteam:
   api_key: "<mteam-api-key>"
@@ -189,7 +189,7 @@ API Key 获取位置：M-Team 控制台 → 实验室/API。
 mcp:
   extra_instructions: |
     每次下载前先调用 list_download_categories 查询已有分类。
-    按内容选择分类，并在请用户确认下载时说明所选分类。
+    按内容选择分类，并在添加下载时说明所选分类。
     无法判断分类时先询问用户，不要随意选择。
 ```
 

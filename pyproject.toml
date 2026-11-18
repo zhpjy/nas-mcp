@@ -1,6 +1,6 @@
 [project]
 name = "nas-mcp"
-version = "0.2.0"
+version = "0.2.1"
 description = "MCP server for searching PT torrents and pushing them to qBittorrent"
 readme = "README.md"
 requires-python = ">=3.12"

@@ -24,10 +24,10 @@ mcp:
   host: 127.0.0.1
   port: 8000
   # 可选：追加到 MCP initialize 响应的自定义要求，启动时与内置说明拼接。
-  # 用于规定 agent 的操作方式，例如下载时必须先按分类确认。
+  # 用于规定 agent 的操作方式，例如下载时按内容选择分类。
   # extra_instructions: |
   #   每次下载前先调用 list_download_categories 查询已有分类。
-  #   按内容选择分类，并在请用户确认下载时说明所选分类。
+  #   按内容选择分类，并在添加下载时说明所选分类。
   #   无法判断分类时先询问用户，不要随意选择。
   extra_instructions: ""
 
