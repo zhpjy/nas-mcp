@@ -49,11 +49,23 @@ def get_settings() -> Settings:
     return _settings
 
 
+def _apply_instructions(settings: Settings) -> None:
+    """把部署者自定义要求追加到 initialize 响应的 instructions。"""
+    extra = settings.extra_instructions.strip()
+    text = _INSTRUCTIONS
+    if extra:
+        # 自定义要求放在内置规则之后，避免被固定流程淹没
+        text = f"{_INSTRUCTIONS}\n\n以下为部署者配置的自定义要求，请优先遵循：\n{extra}"
+    # MCPServer 的 instructions 是只读属性，实际字段在底层 Server 上
+    mcp._lowlevel_server.instructions = text
+
+
 def configure_settings(settings: Settings) -> None:
     """启动时固定配置，供工具和 HTTP 中间件共用。"""
     global _settings, _registry
     _settings = settings
     _registry = AccessKeyRegistry(settings)
+    _apply_instructions(settings)
     get_service.cache_clear()
 
 
@@ -200,7 +212,9 @@ async def get_config_status(check_connectivity: bool = False) -> dict[str, Any]:
         raise ToolError(str(exc)) from exc
 
 
-def _print_check(status: dict[str, Any]) -> int:
+def _print_check(status: dict[str, Any], settings: Settings) -> int:
+    source = str(settings.config_path) if settings.config_path is not None else "未找到，使用默认值"
+    print(f"配置文件：{source}")
     healthy = bool(status.get("ready"))
     print(f"NAS MCP: {'就绪' if healthy else '未就绪'}")
 
@@ -291,7 +305,7 @@ def main(argv: Sequence[str] | None = None) -> int:
     if args.check:
         service = NasService.from_settings(settings)
         status = asyncio.run(service.get_config_status(check_connectivity=True))
-        return _print_check(status)
+        return _print_check(status, settings)
 
     if settings.transport == "streamable-http":
         import uvicorn

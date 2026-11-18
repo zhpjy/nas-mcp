@@ -2,8 +2,9 @@
 
 from __future__ import annotations
 
+import os
 from collections.abc import Mapping
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from pathlib import Path
 from typing import Any, cast
 
@@ -14,7 +15,24 @@ from .errors import ConfigError
 _DEFAULT_MCP_PORT = 8000
 _DEFAULT_TIMEOUT = 30.0
 _DEFAULT_MAX_TORRENT_MB = 32
-_DEFAULT_CONFIG_PATH = Path("config.yaml")
+_ENV_CONFIG_PATH = "NAS_MCP_CONFIG"
+
+
+def _config_candidates() -> tuple[Path, ...]:
+    """默认配置位置：当前目录优先，其次是用户配置目录。"""
+    candidates = [Path("config.yaml")]
+    config_home = os.environ.get("XDG_CONFIG_HOME", "").strip()
+    base_dir = Path(config_home).expanduser() if config_home else Path.home() / ".config"
+    candidates.append(base_dir / "nas-mcp" / "config.yaml")
+    return tuple(candidates)
+
+
+def _env_config_path() -> Path | None:
+    """读取 NAS_MCP_CONFIG；未设置时返回 None。"""
+    value = os.environ.get(_ENV_CONFIG_PATH, "").strip()
+    if not value:
+        return None
+    return Path(value).expanduser()
 
 
 def _mapping(value: Any, path: str) -> Mapping[str, Any]:
@@ -256,6 +274,10 @@ class Settings:
     transport: str = "streamable-http"
     host: str = "127.0.0.1"
     port: int = _DEFAULT_MCP_PORT
+    # 追加到 MCP initialize 响应的部署者自定义要求
+    extra_instructions: str = ""
+    # 实际读取的配置文件，仅用于诊断；不参与相等比较和 repr
+    config_path: Path | None = field(default=None, compare=False, repr=False)
 
     @property
     def access_keys_enabled(self) -> bool:
@@ -276,7 +298,7 @@ class Settings:
             "配置",
         )
         mcp = _mapping(root.get("mcp"), "mcp")
-        _only_keys(mcp, {"transport", "host", "port"}, "mcp")
+        _only_keys(mcp, {"transport", "host", "port", "extra_instructions"}, "mcp")
         defaults = _mapping(root.get("defaults"), "defaults")
         _only_keys(defaults, {"site", "downloader"}, "defaults")
 
@@ -299,17 +321,31 @@ class Settings:
             transport=transport,
             host=_string(mcp, "host", "mcp", "127.0.0.1") or "127.0.0.1",
             port=port,
+            extra_instructions=_string(mcp, "extra_instructions", "mcp"),
         )
 
     @classmethod
     def load(cls, path: str | Path | None = None) -> Settings:
-        """读取 YAML 配置；未指定路径且默认文件不存在时返回默认配置。"""
-        explicit = path is not None
-        config_path = Path(path) if path is not None else _DEFAULT_CONFIG_PATH
-        if not config_path.exists():
-            if explicit:
-                raise ConfigError(f"配置文件不存在：{config_path}")
+        """读取 YAML 配置。
+
+        依次查找 ``path`` 参数、``NAS_MCP_CONFIG`` 环境变量、当前目录的
+        ``config.yaml``、``~/.config/nas-mcp/config.yaml``。显式指定的文件
+        不存在时报错；全部缺失时返回默认配置。
+        """
+        config_path: Path | None
+        if path is not None:
+            config_path = Path(path).expanduser()
+        elif (env_path := _env_config_path()) is not None:
+            config_path = env_path
+        else:
+            config_path = next(
+                (candidate.resolve() for candidate in _config_candidates() if candidate.exists()),
+                None,
+            )
+        if config_path is None:
             return cls()
+        if not config_path.exists():
+            raise ConfigError(f"配置文件不存在：{config_path}")
         try:
             raw = config_path.read_text(encoding="utf-8")
         except OSError as exc:
@@ -320,7 +356,10 @@ class Settings:
             raise ConfigError(f"配置文件 {config_path} 不是有效 YAML：{exc}") from exc
         if data is not None and not isinstance(data, Mapping):
             raise ConfigError(f"配置文件 {config_path} 的根节点必须是映射")
-        return cls.from_mapping(cast(Mapping[str, Any] | None, data))
+        return replace(
+            cls.from_mapping(cast(Mapping[str, Any] | None, data)),
+            config_path=config_path,
+        )
 
 
 def _parse_access_keys(value: Any) -> tuple[AccessKeyConfig, ...]:

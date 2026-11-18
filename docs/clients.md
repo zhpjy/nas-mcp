@@ -3,6 +3,53 @@
 服务默认使用 `streamable-http`，本地 stdio 或远程 HTTP 都可以接入。
 配置项见 [配置](configuration.md)。
 
+## 用 uvx 运行（不克隆源码）
+
+wheel 由 GitHub Release 提供，客户端直接把 uvx 命令写进配置即可。
+配置文件放在 `~/.config/nas-mcp/config.yaml`，或通过 `--config` / `NAS_MCP_CONFIG` 指定：
+
+```json
+{
+  "$schema": "https://opencode.ai/config.json",
+  "mcp": {
+    "nas-mcp": {
+      "type": "local",
+      "command": [
+        "uvx",
+        "--from",
+        "https://github.com/<owner>/nas-mcp/releases/download/v0.1.0/nas_mcp-0.1.0-py3-none-any.whl",
+        "nas-mcp",
+        "--transport",
+        "stdio"
+      ],
+      "enabled": true
+    }
+  }
+}
+```
+
+Claude Desktop 使用相同的命令：
+
+```json
+{
+  "mcpServers": {
+    "nas-mcp": {
+      "command": "uvx",
+      "args": [
+        "--from",
+        "https://github.com/<owner>/nas-mcp/releases/download/v0.1.0/nas_mcp-0.1.0-py3-none-any.whl",
+        "nas-mcp",
+        "--transport",
+        "stdio"
+      ]
+    }
+  }
+}
+```
+
+升级时替换 URL 中的版本号和文件名版本，参考
+[GitHub Releases](https://github.com/<owner>/nas-mcp/releases)。
+
 ## opencode：本地 stdio
 
 `uv --directory` 会把工作目录切到项目目录，因此会读取该目录下的 `config.yaml`：
@@ -88,7 +135,7 @@ uv run nas-mcp
 uv run nas-mcp --help
 ```
 
-- `--config`：配置文件路径，默认 `config.yaml`
+- `--config`：配置文件路径；未指定时依次查找 `NAS_MCP_CONFIG`、`./config.yaml`、`~/.config/nas-mcp/config.yaml`
 - `--transport`：`stdio` 或 `streamable-http`
 - `--host`：覆盖 `mcp.host`
 - `--port`：覆盖 `mcp.port`

@@ -44,6 +44,9 @@ docker compose exec nas-mcp nas-mcp --check
 - 推送版本标签，例如 `v0.1.0`：发布 `0.1.0`、`0.1` 和对应提交标签。
 - Pull request：仅构建，不推送镜像。
 
+版本标签还会触发 `.github/workflows/release.yml`，运行测试并把 sdist、wheel 上传到
+GitHub Release，可直接配合 `uvx` 使用，见 [README](../README.md#用-uvx-运行)。
+
 `latest` 跟随主分支，NAS 长期部署建议固定版本标签。首次发布后，在 GitHub Package 设置中
 将镜像设为 Public 即可匿名拉取；保留 Private 时，NAS 需要先登录 GHCR 并具有拉取权限。
 版本标签应与 `pyproject.toml` 中的版本对应。

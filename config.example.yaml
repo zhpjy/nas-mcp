@@ -1,5 +1,6 @@
 # nas-mcp 配置文件
 # 复制为 config.yaml 后填写。config.yaml 含密钥，不要提交到 Git。
+# 查找顺序：--config > NAS_MCP_CONFIG > ./config.yaml > ~/.config/nas-mcp/config.yaml
 #
 # 全局默认：是否允许搜索成人内容。默认 false。
 # access_keys 中的 adult_enabled 可以单独覆盖这个值。
@@ -21,6 +22,13 @@ mcp:
   transport: streamable-http
   host: 127.0.0.1
   port: 8000
+  # 可选：追加到 MCP initialize 响应的自定义要求，启动时与内置说明拼接。
+  # 用于规定 agent 的操作方式，例如下载时必须先按分类确认。
+  # extra_instructions: |
+  #   每次下载前先调用 list_download_categories 查询已有分类。
+  #   按内容选择分类，并在请用户确认下载时说明所选分类。
+  #   无法判断分类时先询问用户，不要随意选择。
+  extra_instructions: ""
 
 mteam:
   # 在 M-Team 控制台 -> 实验室/API 中获取存取令牌

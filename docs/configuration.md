@@ -1,7 +1,15 @@
 # 配置
 
-nas-mcp 使用一个 YAML 配置文件。默认读取工作目录下的 `config.yaml`，
-也可以用 `uv run nas-mcp --config /path/to/config.yaml` 指定。
+nas-mcp 使用一个 YAML 配置文件，按以下顺序查找，使用第一个存在的文件：
+
+1. `--config /path/to/config.yaml`
+2. `NAS_MCP_CONFIG` 环境变量
+3. 当前目录的 `config.yaml`
+4. `$XDG_CONFIG_HOME/nas-mcp/config.yaml`，未设置 `XDG_CONFIG_HOME` 时为 `~/.config/nas-mcp/config.yaml`
+
+显式指定的文件不存在会直接报错；全部缺失时使用内置默认值（M-Team 和 qBittorrent 均未配置）。
+用 uvx 从任意目录启动时，建议把配置放在用户配置目录或设置 `NAS_MCP_CONFIG`；
+`nas-mcp --check` 会打印实际读取的配置文件。
 
 ```bash
 cp config.example.yaml config.yaml
@@ -31,6 +39,10 @@ mcp:
   transport: streamable-http
   host: 127.0.0.1
   port: 8000
+  # 可选，支持 YAML 多行文本
+  extra_instructions: |
+    每次下载前先调用 list_download_categories 查询已有分类。
+    按内容选择分类，并在请用户确认下载时说明所选分类。
 
 mteam:
   api_key: "<mteam-api-key>"
@@ -124,8 +136,22 @@ API Key 获取位置：M-Team 控制台 → 实验室/API。
 | `mcp.transport` | `streamable-http` | `stdio` 或 `streamable-http` |
 | `mcp.host` | `127.0.0.1` | HTTP 监听地址 |
 | `mcp.port` | `8000` | HTTP 监听端口 |
+| `mcp.extra_instructions` | 空 | 追加到 MCP `initialize` 响应的自定义要求，省略时使用内置说明 |
 | `defaults.site` | `mteam` | 默认 PT 站 |
 | `defaults.downloader` | `qbittorrent` | 默认下载器 |
+
+`mcp.extra_instructions` 用于规定 agent 的操作方式，例如要求下载时按内容选择分类：
+
+```yaml
+mcp:
+  extra_instructions: |
+    每次下载前先调用 list_download_categories 查询已有分类。
+    按内容选择分类，并在请用户确认下载时说明所选分类。
+    无法判断分类时先询问用户，不要随意选择。
+```
+
+自定义要求会拼在内置说明之后，在新 MCP 会话建立时随 `initialize` 响应发送给客户端；
+是否进入模型上下文由客户端决定。它约束 agent 的行为，不会在服务端校验参数。
 
 启动参数 `--config`、`--transport`、`--host`、`--port` 可以覆盖配置文件中的对应值。
 

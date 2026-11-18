@@ -23,6 +23,41 @@ uv run nas-mcp --check
 默认读取工作目录下的 `config.yaml`，也可以用 `--config /path/to/config.yaml` 指定。
 `--check` 会检查配置并尝试连接 M-Team 和 qBittorrent。
 
+## 用 uvx 运行
+
+不克隆源码也可以运行。推送 `v*` 标签时，GitHub Actions 会构建 wheel 和 sdist
+并挂到 GitHub Release，用 `uvx` 直接安装：
+
+```bash
+uvx --from https://github.com/<owner>/nas-mcp/releases/download/v0.1.0/nas_mcp-0.1.0-py3-none-any.whl \
+  nas-mcp --check
+```
+
+也可以从 Git 源码运行（需要本机有 `git`）：
+
+```bash
+uvx --from git+https://github.com/<owner>/nas-mcp nas-mcp --transport stdio
+```
+
+`uvx` 会在任意工作目录启动，配置文件按以下顺序查找：
+
+1. `--config /path/to/config.yaml`
+2. `NAS_MCP_CONFIG` 环境变量
+3. 当前目录的 `config.yaml`
+4. `~/.config/nas-mcp/config.yaml`（设置了 `XDG_CONFIG_HOME` 时为 `$XDG_CONFIG_HOME/nas-mcp/config.yaml`）
+
+uvx 场景建议把配置放到用户目录：
+
+```bash
+mkdir -p ~/.config/nas-mcp
+cp config.example.yaml ~/.config/nas-mcp/config.yaml
+chmod 600 ~/.config/nas-mcp/config.yaml
+# 编辑 ~/.config/nas-mcp/config.yaml，填入 mteam.api_key 和 qbittorrent 配置
+```
+
+`uvx nas-mcp` 默认是 `streamable-http`；本地 MCP 客户端需要 stdio 时加 `--transport stdio`。
+升级时把命令中的版本号换成新版本。
+
 ## 运行
 
 默认使用 `streamable-http`：

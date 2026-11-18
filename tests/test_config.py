@@ -8,6 +8,18 @@ from nas_mcp.config import AccessKeyConfig, Settings
 from nas_mcp.errors import ConfigError
 
 
+@pytest.fixture
+def config_env(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
+    """隔离 HOME、XDG 配置目录和 NAS_MCP_CONFIG，避免读到本机配置。"""
+    home = tmp_path / "home"
+    home.mkdir()
+    monkeypatch.setenv("HOME", str(home))
+    monkeypatch.delenv("XDG_CONFIG_HOME", raising=False)
+    monkeypatch.delenv("NAS_MCP_CONFIG", raising=False)
+    monkeypatch.chdir(tmp_path)
+    return home
+
+
 def test_defaults() -> None:
     settings = Settings.from_mapping()
     assert settings.adult_enabled is False
@@ -18,6 +30,7 @@ def test_defaults() -> None:
     assert settings.qbittorrent.enabled is False
     assert settings.transport == "streamable-http"
     assert settings.port == 8000
+    assert settings.extra_instructions == ""
 
 
 def test_qbittorrent_basic_auth_and_url_normalization() -> None:
@@ -78,6 +91,17 @@ def test_secrets_are_not_in_repr() -> None:
     assert "mteam-secret" not in rendered
     assert "qbt-secret" not in rendered
     assert "qbt-pass" not in rendered
+
+
+def test_mcp_extra_instructions() -> None:
+    settings = Settings.from_mapping(
+        {"mcp": {"extra_instructions": "  每次下载前先查分类。\n必须传 category。  "}}
+    )
+    # 仅去掉首尾空白，保留换行结构
+    assert settings.extra_instructions == "每次下载前先查分类。\n必须传 category。"
+
+    with pytest.raises(ConfigError, match="必须是字符串"):
+        Settings.from_mapping({"mcp": {"extra_instructions": ["分类"]}})
 
 
 def test_invalid_transport() -> None:
@@ -201,13 +225,78 @@ def test_missing_explicit_config_is_an_error(tmp_path: Path) -> None:
         Settings.load(tmp_path / "missing.yaml")
 
 
-def test_missing_default_config_uses_defaults(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
-    monkeypatch.chdir(tmp_path)
+def test_missing_default_config_uses_defaults(config_env: Path) -> None:
     settings = Settings.load()
+    assert settings.config_path is None
     assert settings.adult_enabled is False
     assert settings.mteam.enabled is False
+
+
+def test_local_config_is_used(config_env: Path, tmp_path: Path) -> None:
+    config = tmp_path / "config.yaml"
+    config.write_text("adult_enabled: true\n", encoding="utf-8")
+
+    settings = Settings.load()
+
+    assert settings.adult_enabled is True
+    assert settings.config_path == config.resolve()
+
+
+def test_user_config_is_used_outside_project(config_env: Path) -> None:
+    config = config_env / ".config" / "nas-mcp" / "config.yaml"
+    config.parent.mkdir(parents=True)
+    config.write_text("adult_enabled: true\n", encoding="utf-8")
+
+    settings = Settings.load()
+
+    assert settings.adult_enabled is True
+    assert settings.config_path == config.resolve()
+
+
+def test_xdg_config_home_is_used(
+    config_env: Path, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    xdg_home = tmp_path / "xdg"
+    monkeypatch.setenv("XDG_CONFIG_HOME", str(xdg_home))
+    config = xdg_home / "nas-mcp" / "config.yaml"
+    config.parent.mkdir(parents=True)
+    config.write_text("adult_enabled: true\n", encoding="utf-8")
+
+    settings = Settings.load()
+
+    assert settings.adult_enabled is True
+    assert settings.config_path == config.resolve()
+
+
+def test_local_config_wins_over_user_config(config_env: Path, tmp_path: Path) -> None:
+    user_config = config_env / ".config" / "nas-mcp" / "config.yaml"
+    user_config.parent.mkdir(parents=True)
+    user_config.write_text("adult_enabled: false\n", encoding="utf-8")
+    (tmp_path / "config.yaml").write_text("adult_enabled: true\n", encoding="utf-8")
+
+    assert Settings.load().adult_enabled is True
+
+
+def test_env_config_wins_over_local_config(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    (tmp_path / "config.yaml").write_text("adult_enabled: false\n", encoding="utf-8")
+    custom = tmp_path / "custom.yaml"
+    custom.write_text("adult_enabled: true\n", encoding="utf-8")
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.setenv("NAS_MCP_CONFIG", str(custom))
+
+    settings = Settings.load()
+
+    assert settings.adult_enabled is True
+    assert settings.config_path == custom
+
+
+def test_missing_env_config_is_an_error(
+    config_env: Path, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setenv("NAS_MCP_CONFIG", str(tmp_path / "missing.yaml"))
+
+    with pytest.raises(ConfigError, match="不存在"):
+        Settings.load()
 
 
 def test_invalid_yaml(tmp_path: Path) -> None:

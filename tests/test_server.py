@@ -17,6 +17,11 @@ from nas_mcp.server import mcp
 async def test_tool_surface() -> None:
     async with Client(mcp) as client:
         result = await client.list_tools()
+        instructions = client.instructions
+
+    assert instructions is not None
+    assert "search_torrents → 用户确认 → download_torrents" in instructions
+    assert "自定义要求" not in instructions
 
     names = {tool.name for tool in result.tools}
     assert names == {
@@ -29,6 +34,22 @@ async def test_tool_surface() -> None:
     schema = json.dumps([tool.model_dump() for tool in result.tools], ensure_ascii=False).lower()
     assert "adult" not in schema
     assert "access_key" not in schema
+
+
+async def test_custom_instructions_are_appended() -> None:
+    extra = "每次下载前先查分类。\n必须显式传 category。"
+    server_module.configure_settings(Settings.from_mapping({"mcp": {"extra_instructions": extra}}))
+    try:
+        async with Client(mcp) as client:
+            instructions = client.instructions
+    finally:
+        # 恢复默认说明，避免影响同一进程内的其他测试
+        server_module.configure_settings(Settings.from_mapping())
+
+    assert instructions is not None
+    assert instructions.startswith(server_module._INSTRUCTIONS)
+    assert "以下为部署者配置的自定义要求，请优先遵循：" in instructions
+    assert extra in instructions
 
 
 class FakeService:
