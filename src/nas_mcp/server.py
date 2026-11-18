@@ -32,6 +32,8 @@ _INSTRUCTIONS = (
     "NAS 下载助手：搜索 PT 种子并推送到 qBittorrent。"
     "固定流程：search_torrents → download_torrents → list_downloads。"
     "用户给出下载目标后直接添加，不需要再次向用户确认。"
+    "search_torrents 按字串匹配关键词，不是语义搜索：关键词要短、准确"
+    "（作品名、季集、IMDb/豆瓣链接），不要传整句、提问或修饰词；没有结果时减少关键词再试。"
     "用户指定 qBittorrent 分类时，先用 list_download_categories 查询，再传给 download_torrents。"
     "配置或连接问题使用 get_config_status。"
     "不要编造种子 ID，不要向用户展示 API Key、密码、access key 或临时下载地址。"
@@ -129,11 +131,12 @@ async def search_torrents(
 ) -> dict[str, Any]:
     """搜索 PT 站种子。
 
-    用户要查找电影、剧集、动画等资源时使用。返回结果中的 id 是后续
-    download_torrents 的输入。
+    用户要查找电影、剧集、动画等资源时使用。站点按字串匹配关键词，不是语义搜索：
+    使用简短、准确的作品名、标题片段或 IMDb/豆瓣链接，避免整句、提问和修饰词；
+    没有结果时减少关键词再试。返回结果中的 id 是后续 download_torrents 的输入。
 
     Args:
-        keyword: 搜索关键词，也可以是 IMDb/豆瓣链接。
+        keyword: 搜索关键词，按字面匹配，也可以是 IMDb/豆瓣链接。
         page: 页码，从 1 开始。
         page_size: 每页数量，1 到 50。
         categories: 可选分类，可传中文名（电影、剧集、动画等）或分类 ID。
