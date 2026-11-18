@@ -29,7 +29,7 @@ uv run nas-mcp --check
 并挂到 GitHub Release，用 `uvx` 直接安装：
 
 ```bash
-uvx --from https://github.com/zhpjy/nas-mcp/releases/download/v0.2.2/nas_mcp-0.2.2-py3-none-any.whl \
+uvx --from https://github.com/zhpjy/nas-mcp/releases/download/v0.2.3/nas_mcp-0.2.3-py3-none-any.whl \
   nas-mcp --check
 ```
 
@@ -62,7 +62,7 @@ export NAS_MCP_MTEAM_API_KEY="<mteam-api-key>"
 export NAS_MCP_QBITTORRENT_URL="http://192.168.1.10:8080"
 export NAS_MCP_QBITTORRENT_USERNAME="admin"
 export NAS_MCP_QBITTORRENT_PASSWORD="<password>"
-uvx --from https://github.com/zhpjy/nas-mcp/releases/download/v0.2.2/nas_mcp-0.2.2-py3-none-any.whl \
+uvx --from https://github.com/zhpjy/nas-mcp/releases/download/v0.2.3/nas_mcp-0.2.3-py3-none-any.whl \
   nas-mcp --transport stdio
 ```
 

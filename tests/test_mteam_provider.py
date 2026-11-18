@@ -386,8 +386,34 @@ async def test_download_retries_then_reports_readable_error(
     with pytest.raises(ProviderError, match="连接失败") as excinfo:
         await make_provider(handler).download("123")
 
-    assert "已自动重试 3 次" in str(excinfo.value)
-    assert calls == 3
+    assert "已自动重试 5 次" in str(excinfo.value)
+    assert calls == 6
+
+
+async def test_download_uses_full_retry_budget(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr(mteam_module, "_DOWNLOAD_RETRY_DELAY", 0)
+    content, _ = make_torrent()
+    download_calls = 0
+
+    def handler(request: httpx2.Request) -> httpx2.Response:
+        nonlocal download_calls
+        if request.url.path == "/api/torrent/genDlToken":
+            return httpx2.Response(200, json={"code": "0", "data": "https://download.example/t"})
+        download_calls += 1
+        if download_calls <= 5:
+            raise httpx2.ReadTimeout("")
+        return httpx2.Response(200, content=content)
+
+    torrent = await make_provider(handler).download("123")
+
+    assert torrent.content == content
+    assert download_calls == 6
+
+
+def test_download_retry_delay_is_capped() -> None:
+    delays = [mteam_module._retry_delay(attempt) for attempt in range(5)]
+
+    assert delays == [0.5, 1.0, 2.0, 3.0, 3.0]
 
 
 async def test_download_does_not_retry_client_error(monkeypatch: pytest.MonkeyPatch) -> None:

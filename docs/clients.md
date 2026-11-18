@@ -18,7 +18,7 @@ wheel 由 GitHub Release 提供，客户端直接把 uvx 命令写进配置即�
       "command": [
         "uvx",
         "--from",
-        "https://github.com/zhpjy/nas-mcp/releases/download/v0.2.2/nas_mcp-0.2.2-py3-none-any.whl",
+        "https://github.com/zhpjy/nas-mcp/releases/download/v0.2.3/nas_mcp-0.2.3-py3-none-any.whl",
         "nas-mcp",
         "--transport",
         "stdio"
@@ -44,7 +44,7 @@ Claude Desktop 使用相同的命令：
       "command": "uvx",
       "args": [
         "--from",
-        "https://github.com/zhpjy/nas-mcp/releases/download/v0.2.2/nas_mcp-0.2.2-py3-none-any.whl",
+        "https://github.com/zhpjy/nas-mcp/releases/download/v0.2.3/nas_mcp-0.2.3-py3-none-any.whl",
         "nas-mcp",
         "--transport",
         "stdio"

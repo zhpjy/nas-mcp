@@ -20,9 +20,10 @@ from .base import PTProvider
 
 _USER_AGENT = "nas-mcp/0.1"
 _TORRENT_ID = re.compile(r"^[0-9]{1,20}$")
-# 下载链路的自动重试次数与退避基数（秒）
-_DOWNLOAD_ATTEMPTS = 3
+# 下载链路的自动重试次数、退避基数和单次退避上限（秒）
+_DOWNLOAD_RETRIES = 5
 _DOWNLOAD_RETRY_DELAY = 0.5
+_DOWNLOAD_RETRY_MAX_DELAY = 3.0
 
 
 class _RetryableDownloadError(ProviderError):
@@ -48,6 +49,11 @@ def _describe_http_error(exc: httpx2.HTTPError) -> str:
     if message:
         return message
     return _HTTP_ERROR_LABELS.get(type(exc).__name__, type(exc).__name__)
+
+
+def _retry_delay(attempt: int) -> float:
+    """指数退避，单次等待最长 3 秒；attempt 从 0 开始。"""
+    return min(_DOWNLOAD_RETRY_DELAY * 2.0**attempt, _DOWNLOAD_RETRY_MAX_DELAY)
 
 
 # M-Team 分类 ID，来源为站点公开分类定义。
@@ -488,16 +494,16 @@ class MTeamProvider(PTProvider):
         self._require_enabled()
         self.validate_torrent_id(torrent_id)
         last_error: ProviderError | None = None
-        for attempt in range(1, _DOWNLOAD_ATTEMPTS + 1):
+        for attempt in range(_DOWNLOAD_RETRIES + 1):
             try:
                 return await self._download_once(torrent_id)
             except _RetryableDownloadError as exc:
                 last_error = exc
-                if attempt < _DOWNLOAD_ATTEMPTS:
+                if attempt < _DOWNLOAD_RETRIES:
                     # 临时链接过期或网络抖动时，重新申请链接再试
-                    await asyncio.sleep(_DOWNLOAD_RETRY_DELAY * attempt)
+                    await asyncio.sleep(_retry_delay(attempt))
         assert last_error is not None
-        raise ProviderError(f"{last_error}（已自动重试 {_DOWNLOAD_ATTEMPTS} 次）") from last_error
+        raise ProviderError(f"{last_error}（已自动重试 {_DOWNLOAD_RETRIES} 次）") from last_error
 
     async def _download_once(self, torrent_id: str) -> TorrentFile:
         # 站点同时接受 query/form，多客户端实现中 query 方式最稳定。
