@@ -29,7 +29,7 @@ uv run nas-mcp --check
 并挂到 GitHub Release，用 `uvx` 直接安装：
 
 ```bash
-uvx --from https://github.com/zhpjy/nas-mcp/releases/download/v0.1.0/nas_mcp-0.1.0-py3-none-any.whl \
+uvx --from https://github.com/zhpjy/nas-mcp/releases/download/v0.2.0/nas_mcp-0.2.0-py3-none-any.whl \
   nas-mcp --check
 ```
 
@@ -54,6 +54,19 @@ cp config.example.yaml ~/.config/nas-mcp/config.yaml
 chmod 600 ~/.config/nas-mcp/config.yaml
 # 编辑 ~/.config/nas-mcp/config.yaml，填入 mteam.api_key 和 qbittorrent 配置
 ```
+
+也可以完全不用配置文件，直接用环境变量（适合交给客户端或 magpie 托管）：
+
+```bash
+export NAS_MCP_MTEAM_API_KEY="<mteam-api-key>"
+export NAS_MCP_QBITTORRENT_URL="http://192.168.1.10:8080"
+export NAS_MCP_QBITTORRENT_USERNAME="admin"
+export NAS_MCP_QBITTORRENT_PASSWORD="<password>"
+uvx --from https://github.com/zhpjy/nas-mcp/releases/download/v0.2.0/nas_mcp-0.2.0-py3-none-any.whl \
+  nas-mcp --transport stdio
+```
+
+环境变量会覆盖配置文件中的同名字段，完整列表见 [配置](docs/configuration.md#环境变量)。
 
 `uvx nas-mcp` 默认是 `streamable-http`；本地 MCP 客户端需要 stdio 时加 `--transport stdio`。
 升级时把命令中的版本号换成新版本。

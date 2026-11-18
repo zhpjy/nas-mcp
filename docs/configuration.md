@@ -1,6 +1,7 @@
 # 配置
 
-nas-mcp 使用一个 YAML 配置文件，按以下顺序查找，使用第一个存在的文件：
+nas-mcp 的配置来自 YAML 文件和 `NAS_MCP_*` 环境变量，两者可以单独使用，也可以组合。
+文件按以下顺序查找，使用第一个存在的文件：
 
 1. `--config /path/to/config.yaml`
 2. `NAS_MCP_CONFIG` 环境变量
@@ -8,13 +9,55 @@ nas-mcp 使用一个 YAML 配置文件，按以下顺序查找，使用第一个
 4. `$XDG_CONFIG_HOME/nas-mcp/config.yaml`，未设置 `XDG_CONFIG_HOME` 时为 `~/.config/nas-mcp/config.yaml`
 
 显式指定的文件不存在会直接报错；全部缺失时使用内置默认值（M-Team 和 qBittorrent 均未配置）。
-用 uvx 从任意目录启动时，建议把配置放在用户配置目录或设置 `NAS_MCP_CONFIG`；
-`nas-mcp --check` 会打印实际读取的配置文件。
+环境变量会覆盖文件中的同名字段，优先级为：命令行参数 > 环境变量 > 配置文件 > 内置默认值。
+用 uvx 从任意目录启动时，建议把配置放在用户配置目录、设置 `NAS_MCP_CONFIG`，
+或直接用环境变量；`nas-mcp --check` 会打印实际读取的配置文件和生效的环境变量名。
 
 ```bash
 cp config.example.yaml config.yaml
 chmod 600 config.yaml
 ```
+
+## 环境变量
+
+所有标量字段都可以用环境变量覆盖，也可以完全不用配置文件。
+
+| 环境变量 | 对应字段 | 说明 |
+|---|---|---|
+| `NAS_MCP_ADULT_ENABLED` | `adult_enabled` | `true` / `false` |
+| `NAS_MCP_ACCESS_KEYS` | `access_keys` | JSON/YAML 列表，整表替换 |
+| `NAS_MCP_TRANSPORT` | `mcp.transport` | `stdio` 或 `streamable-http` |
+| `NAS_MCP_HOST` | `mcp.host` | |
+| `NAS_MCP_PORT` | `mcp.port` | |
+| `NAS_MCP_EXTRA_INSTRUCTIONS` | `mcp.extra_instructions` | |
+| `NAS_MCP_DEFAULT_SITE` | `defaults.site` | |
+| `NAS_MCP_DEFAULT_DOWNLOADER` | `defaults.downloader` | |
+| `NAS_MCP_MTEAM_API_KEY` | `mteam.api_key` | |
+| `NAS_MCP_MTEAM_API_BASE` | `mteam.api_base` | |
+| `NAS_MCP_MTEAM_SITE_URL` | `mteam.site_url` | |
+| `NAS_MCP_MTEAM_TIMEOUT` | `mteam.timeout` | 秒 |
+| `NAS_MCP_MTEAM_MAX_TORRENT_MB` | `mteam.max_torrent_mb` | MB |
+| `NAS_MCP_QBITTORRENT_URL` | `qbittorrent.url` | 可省略 `http://` |
+| `NAS_MCP_QBITTORRENT_BASIC_AUTH` | `qbittorrent.basic_auth` | `username:password` |
+| `NAS_MCP_QBITTORRENT_USERNAME` | `qbittorrent.username` | |
+| `NAS_MCP_QBITTORRENT_PASSWORD` | `qbittorrent.password` | |
+| `NAS_MCP_QBITTORRENT_SAVE_PATH` | `qbittorrent.save_path` | |
+| `NAS_MCP_QBITTORRENT_CATEGORY` | `qbittorrent.category` | |
+| `NAS_MCP_QBITTORRENT_TAGS` | `qbittorrent.tags` | 逗号分隔 |
+| `NAS_MCP_QBITTORRENT_TIMEOUT` | `qbittorrent.timeout` | 秒 |
+
+`NAS_MCP_ACCESS_KEYS` 使用 JSON 单行或 YAML 列表，示例：
+
+```bash
+export NAS_MCP_ACCESS_KEYS='[
+  {"name": "日常助手", "key": "<access-key-1>", "adult_enabled": false},
+  {"name": "私人助手", "key": "<access-key-2>", "adult_enabled": true}
+]'
+```
+
+设置后会整表替换配置文件中的 `access_keys`，不做逐项合并。
+未列出的 `NAS_MCP_*` 变量会被忽略；`NAS_MCP_CONFIG` 只用于指定配置文件路径，不参与字段覆盖。
+`nas-mcp --check` 会列出实际生效的变量名，不会输出具体的值。
 
 `config.yaml` 含 M-Team API Key、access key 和 qBittorrent 凭据，已加入 `.gitignore`，
 不要提交或打进镜像。旧版本的 `.env` 不再读取，请把原来的环境变量值迁移到对应字段。

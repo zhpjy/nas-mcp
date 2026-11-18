@@ -6,7 +6,8 @@
 ## 用 uvx 运行（不克隆源码）
 
 wheel 由 GitHub Release 提供，客户端直接把 uvx 命令写进配置即可。
-配置文件放在 `~/.config/nas-mcp/config.yaml`，或通过 `--config` / `NAS_MCP_CONFIG` 指定：
+配置可以放在 `~/.config/nas-mcp/config.yaml`，也可以直接用环境变量传入，
+环境变量会覆盖文件中的同名字段。
 
 ```json
 {
@@ -17,11 +18,17 @@ wheel 由 GitHub Release 提供，客户端直接把 uvx 命令写进配置即�
       "command": [
         "uvx",
         "--from",
-        "https://github.com/zhpjy/nas-mcp/releases/download/v0.1.0/nas_mcp-0.1.0-py3-none-any.whl",
+        "https://github.com/zhpjy/nas-mcp/releases/download/v0.2.0/nas_mcp-0.2.0-py3-none-any.whl",
         "nas-mcp",
         "--transport",
         "stdio"
       ],
+      "environment": {
+        "NAS_MCP_MTEAM_API_KEY": "<mteam-api-key>",
+        "NAS_MCP_QBITTORRENT_URL": "http://192.168.1.10:8080",
+        "NAS_MCP_QBITTORRENT_USERNAME": "admin",
+        "NAS_MCP_QBITTORRENT_PASSWORD": "<password>"
+      },
       "enabled": true
     }
   }
@@ -37,11 +44,17 @@ Claude Desktop 使用相同的命令：
       "command": "uvx",
       "args": [
         "--from",
-        "https://github.com/zhpjy/nas-mcp/releases/download/v0.1.0/nas_mcp-0.1.0-py3-none-any.whl",
+        "https://github.com/zhpjy/nas-mcp/releases/download/v0.2.0/nas_mcp-0.2.0-py3-none-any.whl",
         "nas-mcp",
         "--transport",
         "stdio"
-      ]
+      ],
+      "env": {
+        "NAS_MCP_MTEAM_API_KEY": "<mteam-api-key>",
+        "NAS_MCP_QBITTORRENT_URL": "http://192.168.1.10:8080",
+        "NAS_MCP_QBITTORRENT_USERNAME": "admin",
+        "NAS_MCP_QBITTORRENT_PASSWORD": "<password>"
+      }
     }
   }
 }

@@ -215,6 +215,8 @@ async def get_config_status(check_connectivity: bool = False) -> dict[str, Any]:
 def _print_check(status: dict[str, Any], settings: Settings) -> int:
     source = str(settings.config_path) if settings.config_path is not None else "未找到，使用默认值"
     print(f"配置文件：{source}")
+    if settings.env_overrides:
+        print(f"环境变量：{', '.join(settings.env_overrides)}")
     healthy = bool(status.get("ready"))
     print(f"NAS MCP: {'就绪' if healthy else '未就绪'}")
 

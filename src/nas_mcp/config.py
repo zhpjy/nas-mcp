@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import os
-from collections.abc import Mapping
+from collections.abc import Callable, Mapping
 from dataclasses import dataclass, field, replace
 from pathlib import Path
 from typing import Any, cast
@@ -33,6 +33,109 @@ def _env_config_path() -> Path | None:
     if not value:
         return None
     return Path(value).expanduser()
+
+
+def _env_bool(value: str) -> bool:
+    normalized = value.strip().lower()
+    if normalized in {"1", "true", "yes", "on"}:
+        return True
+    if normalized in {"0", "false", "no", "off"}:
+        return False
+    raise ValueError("必须是 true 或 false")
+
+
+def _env_int(value: str) -> int:
+    try:
+        return int(value.strip())
+    except ValueError:
+        raise ValueError("必须是整数") from None
+
+
+def _env_float(value: str) -> float:
+    try:
+        return float(value.strip())
+    except ValueError:
+        raise ValueError("必须是数字") from None
+
+
+def _env_tags(value: str) -> list[str]:
+    """逗号分隔的标签列表。"""
+    return [tag.strip() for tag in value.split(",") if tag.strip()]
+
+
+def _env_access_keys(value: str) -> Any:
+    """读取 access_keys 环境变量，支持 JSON 或 YAML 列表。"""
+    try:
+        data = yaml.safe_load(value)
+    except yaml.YAMLError as exc:
+        raise ValueError(f"不是有效 JSON/YAML：{exc}") from exc
+    # 提前校验一次，报错信息才能带上环境变量名
+    _parse_access_keys(data)
+    return data
+
+
+# 环境变量白名单：变量名 -> (配置路径, 解析函数)。不在此表中的 NAS_MCP_* 变量忽略。
+_ENV_FIELDS: dict[str, tuple[tuple[str, ...], Callable[[str], Any]]] = {
+    "NAS_MCP_ADULT_ENABLED": (("adult_enabled",), _env_bool),
+    "NAS_MCP_ACCESS_KEYS": (("access_keys",), _env_access_keys),
+    "NAS_MCP_TRANSPORT": (("mcp", "transport"), str),
+    "NAS_MCP_HOST": (("mcp", "host"), str),
+    "NAS_MCP_PORT": (("mcp", "port"), _env_int),
+    "NAS_MCP_EXTRA_INSTRUCTIONS": (("mcp", "extra_instructions"), str),
+    "NAS_MCP_DEFAULT_SITE": (("defaults", "site"), str),
+    "NAS_MCP_DEFAULT_DOWNLOADER": (("defaults", "downloader"), str),
+    "NAS_MCP_MTEAM_API_KEY": (("mteam", "api_key"), str),
+    "NAS_MCP_MTEAM_API_BASE": (("mteam", "api_base"), str),
+    "NAS_MCP_MTEAM_SITE_URL": (("mteam", "site_url"), str),
+    "NAS_MCP_MTEAM_TIMEOUT": (("mteam", "timeout"), _env_float),
+    "NAS_MCP_MTEAM_MAX_TORRENT_MB": (("mteam", "max_torrent_mb"), _env_int),
+    "NAS_MCP_QBITTORRENT_URL": (("qbittorrent", "url"), str),
+    "NAS_MCP_QBITTORRENT_BASIC_AUTH": (("qbittorrent", "basic_auth"), str),
+    "NAS_MCP_QBITTORRENT_USERNAME": (("qbittorrent", "username"), str),
+    "NAS_MCP_QBITTORRENT_PASSWORD": (("qbittorrent", "password"), str),
+    "NAS_MCP_QBITTORRENT_SAVE_PATH": (("qbittorrent", "save_path"), str),
+    "NAS_MCP_QBITTORRENT_CATEGORY": (("qbittorrent", "category"), str),
+    "NAS_MCP_QBITTORRENT_TAGS": (("qbittorrent", "tags"), _env_tags),
+    "NAS_MCP_QBITTORRENT_TIMEOUT": (("qbittorrent", "timeout"), _env_float),
+}
+
+
+def _env_mapping() -> tuple[dict[str, Any], tuple[str, ...]]:
+    """把白名单内的环境变量组装成配置映射，并返回实际生效的变量名。"""
+    overrides: dict[str, Any] = {}
+    applied: list[str] = []
+    for name, (path, parse) in _ENV_FIELDS.items():
+        raw = os.environ.get(name)
+        if raw is None:
+            continue
+        try:
+            value = parse(raw)
+        except ConfigError as exc:
+            raise ConfigError(f"环境变量 {name}：{exc}") from exc
+        except ValueError as exc:
+            raise ConfigError(f"环境变量 {name} 格式错误：{exc}") from exc
+        cursor = overrides
+        for key in path[:-1]:
+            child = cursor.get(key)
+            if not isinstance(child, dict):
+                child = {}
+                cursor[key] = child
+            cursor = child
+        cursor[path[-1]] = value
+        applied.append(name)
+    return overrides, tuple(applied)
+
+
+def _merge_mapping(base: Mapping[str, Any], extra: Mapping[str, Any]) -> dict[str, Any]:
+    """递归合并配置映射，extra 覆盖同名字段。"""
+    merged = dict(base)
+    for key, value in extra.items():
+        existing = merged.get(key)
+        if isinstance(existing, Mapping) and isinstance(value, Mapping):
+            merged[key] = _merge_mapping(existing, value)
+        else:
+            merged[key] = value
+    return merged
 
 
 def _mapping(value: Any, path: str) -> Mapping[str, Any]:
@@ -278,6 +381,8 @@ class Settings:
     extra_instructions: str = ""
     # 实际读取的配置文件，仅用于诊断；不参与相等比较和 repr
     config_path: Path | None = field(default=None, compare=False, repr=False)
+    # 实际生效的环境变量名，仅用于诊断，不含具体值
+    env_overrides: tuple[str, ...] = field(default=(), compare=False, repr=False)
 
     @property
     def access_keys_enabled(self) -> bool:
@@ -326,11 +431,13 @@ class Settings:
 
     @classmethod
     def load(cls, path: str | Path | None = None) -> Settings:
-        """读取 YAML 配置。
+        """读取配置。
 
-        依次查找 ``path`` 参数、``NAS_MCP_CONFIG`` 环境变量、当前目录的
-        ``config.yaml``、``~/.config/nas-mcp/config.yaml``。显式指定的文件
-        不存在时报错；全部缺失时返回默认配置。
+        文件依次查找 ``path`` 参数、``NAS_MCP_CONFIG`` 环境变量、当前目录的
+        ``config.yaml``、``~/.config/nas-mcp/config.yaml``；显式指定的文件
+        不存在时报错。随后用 ``NAS_MCP_*`` 环境变量覆盖文件中的同名字段，
+        其中 ``NAS_MCP_ACCESS_KEYS`` 整表替换 ``access_keys``。
+        两者都没有时返回默认配置。
         """
         config_path: Path | None
         if path is not None:
@@ -342,23 +449,29 @@ class Settings:
                 (candidate.resolve() for candidate in _config_candidates() if candidate.exists()),
                 None,
             )
-        if config_path is None:
-            return cls()
-        if not config_path.exists():
-            raise ConfigError(f"配置文件不存在：{config_path}")
-        try:
-            raw = config_path.read_text(encoding="utf-8")
-        except OSError as exc:
-            raise ConfigError(f"无法读取配置文件 {config_path}：{exc}") from exc
-        try:
-            data = yaml.safe_load(raw)
-        except yaml.YAMLError as exc:
-            raise ConfigError(f"配置文件 {config_path} 不是有效 YAML：{exc}") from exc
-        if data is not None and not isinstance(data, Mapping):
-            raise ConfigError(f"配置文件 {config_path} 的根节点必须是映射")
+
+        file_data: Mapping[str, Any] = {}
+        if config_path is not None:
+            if not config_path.exists():
+                raise ConfigError(f"配置文件不存在：{config_path}")
+            try:
+                raw = config_path.read_text(encoding="utf-8")
+            except OSError as exc:
+                raise ConfigError(f"无法读取配置文件 {config_path}：{exc}") from exc
+            try:
+                data = yaml.safe_load(raw)
+            except yaml.YAMLError as exc:
+                raise ConfigError(f"配置文件 {config_path} 不是有效 YAML：{exc}") from exc
+            if data is not None and not isinstance(data, Mapping):
+                raise ConfigError(f"配置文件 {config_path} 的根节点必须是映射")
+            if data is not None:
+                file_data = cast(Mapping[str, Any], data)
+
+        env_data, env_overrides = _env_mapping()
         return replace(
-            cls.from_mapping(cast(Mapping[str, Any] | None, data)),
+            cls.from_mapping(_merge_mapping(file_data, env_data)),
             config_path=config_path,
+            env_overrides=env_overrides,
         )
 
 

@@ -1,11 +1,20 @@
 from __future__ import annotations
 
+import os
 from pathlib import Path
 
 import pytest
 
 from nas_mcp.config import AccessKeyConfig, Settings
 from nas_mcp.errors import ConfigError
+
+
+@pytest.fixture(autouse=True)
+def clean_env(monkeypatch: pytest.MonkeyPatch) -> None:
+    """清除宿主的 NAS_MCP_* 变量，避免环境影响测试结果。"""
+    for name in list(os.environ):
+        if name.startswith("NAS_MCP_"):
+            monkeypatch.delenv(name, raising=False)
 
 
 @pytest.fixture
@@ -15,7 +24,6 @@ def config_env(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
     home.mkdir()
     monkeypatch.setenv("HOME", str(home))
     monkeypatch.delenv("XDG_CONFIG_HOME", raising=False)
-    monkeypatch.delenv("NAS_MCP_CONFIG", raising=False)
     monkeypatch.chdir(tmp_path)
     return home
 
@@ -297,6 +305,138 @@ def test_missing_env_config_is_an_error(
 
     with pytest.raises(ConfigError, match="不存在"):
         Settings.load()
+
+
+def test_env_only_config(config_env: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv("NAS_MCP_MTEAM_API_KEY", "env-key")
+    monkeypatch.setenv("NAS_MCP_QBITTORRENT_URL", "qbt:8080")
+    monkeypatch.setenv("NAS_MCP_QBITTORRENT_USERNAME", "admin")
+    monkeypatch.setenv("NAS_MCP_QBITTORRENT_PASSWORD", "pass")
+
+    settings = Settings.load()
+
+    assert settings.config_path is None
+    assert settings.mteam.api_key == "env-key"
+    assert settings.qbittorrent.url == "http://qbt:8080"
+    assert settings.qbittorrent.username == "admin"
+    assert settings.qbittorrent.enabled is True
+    assert set(settings.env_overrides) == {
+        "NAS_MCP_MTEAM_API_KEY",
+        "NAS_MCP_QBITTORRENT_URL",
+        "NAS_MCP_QBITTORRENT_USERNAME",
+        "NAS_MCP_QBITTORRENT_PASSWORD",
+    }
+
+
+def test_env_overrides_file(
+    config_env: Path, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    (tmp_path / "config.yaml").write_text(
+        "mteam:\n  api_key: file-key\n  timeout: 10\nqbittorrent:\n  category: movies\n",
+        encoding="utf-8",
+    )
+    monkeypatch.setenv("NAS_MCP_MTEAM_API_KEY", "env-key")
+
+    settings = Settings.load()
+
+    assert settings.mteam.api_key == "env-key"
+    assert settings.mteam.timeout == 10.0
+    assert settings.qbittorrent.category == "movies"
+
+
+def test_env_bool_int_and_transport(config_env: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv("NAS_MCP_ADULT_ENABLED", "true")
+    monkeypatch.setenv("NAS_MCP_PORT", "9100")
+    monkeypatch.setenv("NAS_MCP_TRANSPORT", "stdio")
+
+    settings = Settings.load()
+
+    assert settings.adult_enabled is True
+    assert settings.port == 9100
+    assert settings.transport == "stdio"
+
+
+def test_env_access_keys(config_env: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv(
+        "NAS_MCP_ACCESS_KEYS",
+        '[{"name": "日常", "key": "k1", "adult_enabled": false},'
+        ' {"name": "私人", "key": "k2", "adult_enabled": true}]',
+    )
+
+    settings = Settings.load()
+
+    assert [(item.name, item.key) for item in settings.access_keys] == [
+        ("日常", "k1"),
+        ("私人", "k2"),
+    ]
+    assert settings.adult_enabled_for(settings.access_keys[1]) is True
+
+
+def test_env_access_keys_replace_file(
+    config_env: Path, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    (tmp_path / "config.yaml").write_text(
+        "access_keys:\n  - name: 文件\n    key: file-key\n",
+        encoding="utf-8",
+    )
+    monkeypatch.setenv("NAS_MCP_ACCESS_KEYS", '[{"name": "环境", "key": "env-key"}]')
+
+    settings = Settings.load()
+
+    assert [item.name for item in settings.access_keys] == ["环境"]
+
+
+def test_env_access_keys_error_mentions_variable(
+    config_env: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setenv(
+        "NAS_MCP_ACCESS_KEYS",
+        '[{"name": "一", "key": "same"}, {"name": "二", "key": "same"}]',
+    )
+
+    with pytest.raises(ConfigError, match="NAS_MCP_ACCESS_KEYS"):
+        Settings.load()
+
+
+def test_invalid_env_access_keys(config_env: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv("NAS_MCP_ACCESS_KEYS", "[{")
+
+    with pytest.raises(ConfigError, match="NAS_MCP_ACCESS_KEYS"):
+        Settings.load()
+
+
+def test_invalid_env_values(config_env: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv("NAS_MCP_MTEAM_TIMEOUT", "abc")
+    with pytest.raises(ConfigError, match="NAS_MCP_MTEAM_TIMEOUT"):
+        Settings.load()
+
+    monkeypatch.setenv("NAS_MCP_ADULT_ENABLED", "maybe")
+    with pytest.raises(ConfigError, match="NAS_MCP_ADULT_ENABLED"):
+        Settings.load()
+
+
+def test_env_tags(config_env: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv("NAS_MCP_QBITTORRENT_TAGS", "pt, 4k ,")
+
+    assert Settings.load().qbittorrent.tags == ("pt", "4k")
+
+
+def test_unknown_env_is_ignored(config_env: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv("NAS_MCP_UNKNOWN_FIELD", "x")
+
+    settings = Settings.load()
+
+    assert settings.env_overrides == ()
+
+
+def test_env_secrets_are_not_in_repr(config_env: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv("NAS_MCP_MTEAM_API_KEY", "env-mteam-secret")
+    monkeypatch.setenv("NAS_MCP_QBITTORRENT_PASSWORD", "env-qbt-secret")
+
+    rendered = repr(Settings.load())
+
+    assert "env-mteam-secret" not in rendered
+    assert "env-qbt-secret" not in rendered
 
 
 def test_invalid_yaml(tmp_path: Path) -> None:

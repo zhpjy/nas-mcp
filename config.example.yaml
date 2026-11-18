@@ -1,6 +1,7 @@
 # nas-mcp 配置文件
 # 复制为 config.yaml 后填写。config.yaml 含密钥，不要提交到 Git。
 # 查找顺序：--config > NAS_MCP_CONFIG > ./config.yaml > ~/.config/nas-mcp/config.yaml
+# 字段也可以用 NAS_MCP_* 环境变量覆盖，见 docs/configuration.md
 #
 # 全局默认：是否允许搜索成人内容。默认 false。
 # access_keys 中的 adult_enabled 可以单独覆盖这个值。
