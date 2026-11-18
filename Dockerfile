@@ -24,10 +24,7 @@ FROM python:3.12-slim-bookworm AS runtime
 
 ENV PYTHONUNBUFFERED=1 \
     PYTHONDONTWRITEBYTECODE=1 \
-    PATH="/app/.venv/bin:$PATH" \
-    MCP_TRANSPORT=streamable-http \
-    MCP_HOST=0.0.0.0 \
-    MCP_PORT=8000
+    PATH="/app/.venv/bin:$PATH"
 
 WORKDIR /app
 
@@ -39,7 +36,7 @@ USER app
 EXPOSE 8000
 
 HEALTHCHECK --interval=30s --timeout=5s --start-period=10s --retries=3 \
-    CMD ["python", "-c", "import os, socket; socket.create_connection(('127.0.0.1', int(os.getenv('MCP_PORT', '8000'))), 3).close()"]
+    CMD ["python", "-c", "import socket; socket.create_connection(('127.0.0.1', 8000), 3).close()"]
 
-# 默认读取 MCP_TRANSPORT 等环境变量，可在命令后追加参数覆盖，例如 --transport stdio
+# 默认读取工作目录下的 config.yaml；可用 --config 指定其他路径。
 ENTRYPOINT ["nas-mcp"]

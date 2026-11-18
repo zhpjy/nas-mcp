@@ -6,6 +6,7 @@ import asyncio
 from collections.abc import Mapping
 from typing import Any
 
+from .access import current_adult_enabled
 from .config import Settings
 from .downloaders import build_downloaders
 from .downloaders.base import Downloader
@@ -31,11 +32,13 @@ class NasService:
         downloaders: Mapping[str, Downloader],
         default_site: str,
         default_downloader: str,
+        adult_enabled: bool = False,
     ) -> None:
         self.providers = dict(providers)
         self.downloaders = dict(downloaders)
         self.default_site = default_site
         self.default_downloader = default_downloader
+        self.adult_enabled = adult_enabled
 
     @classmethod
     def from_settings(cls, settings: Settings) -> NasService:
@@ -44,6 +47,7 @@ class NasService:
             downloaders=build_downloaders(settings),
             default_site=settings.default_site,
             default_downloader=settings.default_downloader,
+            adult_enabled=settings.adult_enabled,
         )
 
     def _provider(self) -> PTProvider:
@@ -51,36 +55,38 @@ class NasService:
             provider = self.providers.get(self.default_site)
             if provider is None:
                 raise ConfigError(
-                    f"PT_DEFAULT_SITE={self.default_site!r} 未注册，"
+                    f"defaults.site={self.default_site!r} 未注册，"
                     f"可用站点：{', '.join(self.providers) or '无'}"
                 )
             if not provider.enabled:
-                raise ConfigError(f"PT 站 {self.default_site!r} 未配置，请先设置 MTEAM_API_KEY")
+                raise ConfigError(
+                    f"PT 站 {self.default_site!r} 未配置，请在配置文件中设置 mteam.api_key"
+                )
             return provider
 
         for provider in self.providers.values():
             if provider.enabled:
                 return provider
-        raise ConfigError("没有可用的 PT 站，请先设置 MTEAM_API_KEY")
+        raise ConfigError("没有可用的 PT 站，请在配置文件中设置 mteam.api_key")
 
     def _downloader(self) -> Downloader:
         if self.default_downloader:
             downloader = self.downloaders.get(self.default_downloader)
             if downloader is None:
                 raise ConfigError(
-                    f"DOWNLOADER_DEFAULT={self.default_downloader!r} 未注册，"
+                    f"defaults.downloader={self.default_downloader!r} 未注册，"
                     f"可用下载器：{', '.join(self.downloaders) or '无'}"
                 )
             if not downloader.enabled:
                 raise ConfigError(
-                    f"下载器 {self.default_downloader!r} 未配置，请先设置 QBITTORRENT_URL"
+                    f"下载器 {self.default_downloader!r} 未配置，请在配置文件中设置 qbittorrent.url"
                 )
             return downloader
 
         for downloader in self.downloaders.values():
             if downloader.enabled:
                 return downloader
-        raise ConfigError("没有可用的下载器，请先设置 QBITTORRENT_URL")
+        raise ConfigError("没有可用的下载器，请在配置文件中设置 qbittorrent.url")
 
     async def search_torrents(
         self,
@@ -104,6 +110,7 @@ class NasService:
             page_size=page_size,
             categories=categories,
             sort_by=sort_by,
+            include_adult=current_adult_enabled(self.adult_enabled),
         )
         return result.to_dict()
 
@@ -268,22 +275,22 @@ class NasService:
         missing: list[str] = []
         warnings: list[str] = []
         if not any(provider.enabled for provider in self.providers.values()):
-            missing.append("MTEAM_API_KEY")
+            missing.append("mteam.api_key")
         if not any(downloader.enabled for downloader in self.downloaders.values()):
-            missing.append("QBITTORRENT_URL")
+            missing.append("qbittorrent.url")
 
         if self.default_site:
             default_provider = self.providers.get(self.default_site)
             if default_provider is None:
-                warnings.append(f"PT_DEFAULT_SITE={self.default_site!r} 未注册")
+                warnings.append(f"defaults.site={self.default_site!r} 未注册")
             elif not default_provider.enabled:
-                warnings.append(f"PT_DEFAULT_SITE={self.default_site!r} 缺少必要配置")
+                warnings.append(f"defaults.site={self.default_site!r} 缺少必要配置")
         if self.default_downloader:
             default_downloader = self.downloaders.get(self.default_downloader)
             if default_downloader is None:
-                warnings.append(f"DOWNLOADER_DEFAULT={self.default_downloader!r} 未注册")
+                warnings.append(f"defaults.downloader={self.default_downloader!r} 未注册")
             elif not default_downloader.enabled:
-                warnings.append(f"DOWNLOADER_DEFAULT={self.default_downloader!r} 缺少必要配置")
+                warnings.append(f"defaults.downloader={self.default_downloader!r} 缺少必要配置")
 
         qbt = self.downloaders.get("qbittorrent")
         if qbt is not None:
@@ -294,8 +301,8 @@ class NasService:
                 and not qbt_info["basic_auth_configured"]
             ):
                 warnings.append(
-                    "QBITTORRENT_USERNAME 已设置但 QBITTORRENT_PASSWORD 和 "
-                    "QBITTORRENT_BASIC_AUTH 都为空"
+                    "qbittorrent.username 已设置但 qbittorrent.password 和 "
+                    "qbittorrent.basic_auth 都为空"
                 )
 
         return {

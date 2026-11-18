@@ -6,13 +6,24 @@ import argparse
 import asyncio
 import sys
 from collections.abc import Sequence
+from dataclasses import replace
 from functools import lru_cache
 from typing import Any
 
-from dotenv import load_dotenv
 from mcp.server import MCPServer
+from mcp.server.context import CallNext, HandlerResult, ServerRequestContext
 from mcp.server.mcpserver.exceptions import ToolError
+from mcp.shared.exceptions import MCPError
+from starlette.applications import Starlette
 
+from .access import (
+    AccessKeyASGIMiddleware,
+    AccessKeyRegistry,
+    UnauthorizedError,
+    adult_enabled_scope,
+    current_adult_enabled_value,
+    resolve_request_adult_enabled,
+)
 from .config import Settings
 from .errors import ConfigError, NasMcpError
 from .service import NasService
@@ -22,19 +33,75 @@ _INSTRUCTIONS = (
     "固定流程：search_torrents → 用户确认 → download_torrents → list_downloads。"
     "用户指定 qBittorrent 分类时，先用 list_download_categories 查询，再传给 download_torrents。"
     "配置或连接问题使用 get_config_status。"
-    "不要编造种子 ID，不要向用户展示 API Key、密码或临时下载地址。"
+    "不要编造种子 ID，不要向用户展示 API Key、密码、access key 或临时下载地址。"
     "download_torrents 只在服务端内部获取种子并上传，不会返回种子文件。"
 )
 
-mcp = MCPServer("nas-mcp", instructions=_INSTRUCTIONS)
+_settings: Settings | None = None
+_registry: AccessKeyRegistry | None = None
+
+
+def get_settings() -> Settings:
+    """首次使用时读取 config.yaml。"""
+    global _settings
+    if _settings is None:
+        _settings = Settings.load()
+    return _settings
+
+
+def configure_settings(settings: Settings) -> None:
+    """启动时固定配置，供工具和 HTTP 中间件共用。"""
+    global _settings, _registry
+    _settings = settings
+    _registry = AccessKeyRegistry(settings)
+    get_service.cache_clear()
+
+
+def get_registry() -> AccessKeyRegistry:
+    global _registry
+    if _registry is None:
+        _registry = AccessKeyRegistry(get_settings())
+    return _registry
+
+
+class AdultAccessMiddleware:
+    """按每次 HTTP 请求的 access key 设置成人内容权限。"""
+
+    async def __call__(
+        self,
+        ctx: ServerRequestContext[Any, Any],
+        call_next: CallNext,
+    ) -> HandlerResult:
+        # stdio 和进程内客户端没有 HTTP 请求，直接使用全局配置。
+        request = ctx.request
+        if request is None:
+            return await call_next(ctx)
+        try:
+            adult_enabled = resolve_request_adult_enabled(
+                get_settings(),
+                get_registry(),
+                transport_kind="streamable-http",
+                headers=request.headers,
+                fallback=current_adult_enabled_value(),
+            )
+        except UnauthorizedError as exc:
+            raise MCPError(code=-32001, message="Unauthorized") from exc
+        with adult_enabled_scope(adult_enabled):
+            return await call_next(ctx)
+
+
+mcp = MCPServer(
+    "nas-mcp",
+    instructions=_INSTRUCTIONS,
+    middleware=[AdultAccessMiddleware()],
+)
 
 
 @lru_cache(maxsize=1)
 def get_service() -> NasService:
-    """首次调用工具时读取 .env 并构建服务，便于测试时清空缓存。"""
-    load_dotenv()
+    """首次调用工具时读取配置并构建服务，便于测试时清空缓存。"""
     try:
-        return NasService.from_settings(Settings.from_env())
+        return NasService.from_settings(get_settings())
     except ConfigError as exc:
         raise NasMcpError(str(exc)) from exc
 
@@ -141,7 +208,7 @@ def _print_check(status: dict[str, Any]) -> int:
         connectivity = site.get("connectivity")
         if not site.get("enabled"):
             healthy = False
-            print(f"[FAIL] {site.get('name', site.get('id'))}: 未配置 MTEAM_API_KEY")
+            print(f"[FAIL] {site.get('name', site.get('id'))}: 未配置 mteam.api_key")
             continue
         if isinstance(connectivity, dict):
             ok = bool(connectivity.get("ok"))
@@ -155,7 +222,7 @@ def _print_check(status: dict[str, Any]) -> int:
         connectivity = downloader.get("connectivity")
         if not downloader.get("enabled"):
             healthy = False
-            print(f"[FAIL] {downloader.get('name', downloader.get('id'))}: 未配置 QBITTORRENT_URL")
+            print(f"[FAIL] {downloader.get('name', downloader.get('id'))}: 未配置 qbittorrent.url")
             continue
         if isinstance(connectivity, dict):
             ok = bool(connectivity.get("ok"))
@@ -181,37 +248,57 @@ def _print_check(status: dict[str, Any]) -> int:
     return 0 if healthy else 1
 
 
+def create_http_app(settings: Settings) -> Starlette:
+    """构建带 access key 鉴权的 Streamable HTTP 应用。"""
+    configure_settings(settings)
+    app = mcp.streamable_http_app(host=settings.host)
+    app.add_middleware(
+        AccessKeyASGIMiddleware,
+        registry=AccessKeyRegistry(settings),
+    )
+    return app
+
+
 def main(argv: Sequence[str] | None = None) -> int:
     parser = argparse.ArgumentParser(prog="nas-mcp", description="PT 搜索与 qBittorrent 下载 MCP")
+    parser.add_argument("--config", help="配置文件路径，默认 config.yaml")
     parser.add_argument("--check", action="store_true", help="检查配置和连接后退出")
     parser.add_argument(
         "--transport",
         choices=["stdio", "streamable-http"],
-        help="覆盖 MCP_TRANSPORT",
+        help="覆盖 mcp.transport",
     )
-    parser.add_argument("--host", help="覆盖 MCP_HOST")
-    parser.add_argument("--port", type=int, help="覆盖 MCP_PORT")
+    parser.add_argument("--host", help="覆盖 mcp.host")
+    parser.add_argument("--port", type=int, help="覆盖 mcp.port")
     args = parser.parse_args(argv)
 
-    load_dotenv()
     try:
-        settings = Settings.from_env()
+        settings = Settings.load(args.config)
+        if args.transport:
+            settings = replace(settings, transport=args.transport)
+        if args.host:
+            settings = replace(settings, host=args.host)
+        if args.port is not None:
+            if not 1 <= args.port <= 65535:
+                raise ConfigError(f"mcp.port 超出范围：{args.port}")
+            settings = replace(settings, port=args.port)
     except ConfigError as exc:
         print(f"配置错误：{exc}", file=sys.stderr)
         return 2
+
+    configure_settings(settings)
 
     if args.check:
         service = NasService.from_settings(settings)
         status = asyncio.run(service.get_config_status(check_connectivity=True))
         return _print_check(status)
 
-    transport = args.transport or settings.transport
-    host = args.host or settings.host
-    port = args.port or settings.port
-    if transport == "streamable-http":
-        mcp.run(transport="streamable-http", host=host, port=port)
+    if settings.transport == "streamable-http":
+        import uvicorn
+
+        uvicorn.run(create_http_app(settings), host=settings.host, port=settings.port)
     else:
-        mcp.run()
+        mcp.run(transport="stdio")
     return 0
 
 

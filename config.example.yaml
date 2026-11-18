@@ -1,0 +1,53 @@
+# nas-mcp 配置文件
+# 复制为 config.yaml 后填写。config.yaml 含密钥，不要提交到 Git。
+#
+# 全局默认：是否允许搜索成人内容。默认 false。
+# access_keys 中的 adult_enabled 可以单独覆盖这个值。
+adult_enabled: false
+
+# 可选：HTTP access key。配置后，HTTP 请求必须携带
+# Authorization: Bearer <key>。
+# adult_enabled: true / false / null；null 或省略表示跟随全局值。
+access_keys: []
+# access_keys:
+#   - name: 日常助手
+#     key: "replace-with-a-long-random-key"
+#     adult_enabled: false
+#   - name: 私人助手
+#     key: "replace-with-another-long-random-key"
+#     adult_enabled: true
+
+mcp:
+  transport: streamable-http
+  host: 127.0.0.1
+  port: 8000
+
+mteam:
+  # 在 M-Team 控制台 -> 实验室/API 中获取存取令牌
+  api_key: ""
+  api_base: https://api.m-team.cc/api
+  # 站点域名，按你使用的域名填写，例如 https://kp.m-team.cc 或 https://ob.m-team.cc
+  site_url: https://kp.m-team.cc
+  timeout: 30
+  max_torrent_mb: 32
+
+qbittorrent:
+  # 可省略 http://
+  url: "http://127.0.0.1:8080"
+  # 可选：通过 HTTP Basic Auth 访问 qBittorrent 或其反向代理。
+  # 格式为 username:password；设置后优先于 qBittorrent 内置登录。
+  basic_auth: ""
+  username: ""
+  password: ""
+  # 可选：固定保存路径；设置后会自动关闭自动 Torrent 管理（autoTMM）
+  save_path: ""
+  # 可选：分类名；不存在时服务会尝试自动创建
+  category: ""
+  # 可选：标签列表
+  tags: []
+  timeout: 30
+
+defaults:
+  # 只有一个站点/下载器时可以留空
+  site: mteam
+  downloader: qbittorrent

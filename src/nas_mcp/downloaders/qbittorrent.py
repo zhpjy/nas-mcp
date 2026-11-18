@@ -67,7 +67,7 @@ class QBittorrentDownloader(Downloader):
     async def _client(self) -> AsyncIterator[httpx2.AsyncClient]:
         if not self.enabled:
             raise DownloaderError(
-                "未配置 QBITTORRENT_URL，请先在 .env 中设置 qBittorrent WebUI 地址"
+                "未配置 qbittorrent.url，请在配置文件中设置 qBittorrent WebUI 地址"
             )
         async with httpx2.AsyncClient(
             base_url=self.config.url,
@@ -137,8 +137,8 @@ class QBittorrentDownloader(Downloader):
                     f"{context}：qBittorrent 拒绝访问，登录可能已失效或 IP 被封禁"
                 )
             raise DownloaderError(
-                f"{context}：qBittorrent 需要认证，请配置 QBITTORRENT_BASIC_AUTH "
-                "或 QBITTORRENT_USERNAME/QBITTORRENT_PASSWORD"
+                f"{context}：qBittorrent 需要认证，请配置 qbittorrent.basic_auth "
+                "或 qbittorrent.username/qbittorrent.password"
             )
         if response.status_code == 404:
             raise DownloaderError(f"{context}：qBittorrent 接口不存在，请确认 WebUI API 版本")
@@ -275,7 +275,7 @@ class QBittorrentDownloader(Downloader):
 
     async def check_connectivity(self) -> dict[str, Any]:
         if not self.enabled:
-            return {"ok": False, "message": "未配置 QBITTORRENT_URL"}
+            return {"ok": False, "message": "未配置 qbittorrent.url"}
         try:
             async with self._client() as client:
                 version_response = await self._request(client, "GET", "api/v2/app/version")

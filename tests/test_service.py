@@ -4,6 +4,7 @@ from typing import Any
 
 import pytest
 
+from nas_mcp.access import adult_enabled_scope
 from nas_mcp.downloaders.base import Downloader
 from nas_mcp.errors import ConfigError, NasMcpError, ProviderError
 from nas_mcp.models import (
@@ -38,6 +39,7 @@ class FakeProvider(PTProvider):
         page_size: int,
         categories: list[str] | None,
         sort_by: str,
+        include_adult: bool = False,
     ) -> SearchPage:
         self.search_calls.append(
             {
@@ -46,6 +48,7 @@ class FakeProvider(PTProvider):
                 "page_size": page_size,
                 "categories": categories,
                 "sort_by": sort_by,
+                "include_adult": include_adult,
             }
         )
         item = TorrentItem(
@@ -158,12 +161,15 @@ class FakeDownloader(Downloader):
 def make_service(
     provider: FakeProvider | None = None,
     downloader: FakeDownloader | None = None,
+    *,
+    adult_enabled: bool = False,
 ) -> NasService:
     return NasService(
         providers={"fake": provider or FakeProvider()},
         downloaders={"fakeqbt": downloader or FakeDownloader()},
         default_site="fake",
         default_downloader="fakeqbt",
+        adult_enabled=adult_enabled,
     )
 
 
@@ -200,6 +206,27 @@ async def test_search_passes_parameters() -> None:
     assert provider.search_calls[0]["keyword"] == "沙丘"
     assert provider.search_calls[0]["page"] == 2
     assert result["results"][0]["id"] == "1"
+
+
+async def test_search_defaults_to_adult_disabled() -> None:
+    provider = FakeProvider()
+    await make_service(provider).search_torrents("沙丘", 1, 20, None, "seeders")
+
+    assert provider.search_calls[0]["include_adult"] is False
+
+
+async def test_search_uses_request_adult_override() -> None:
+    provider = FakeProvider()
+    with adult_enabled_scope(True):
+        await make_service(provider).search_torrents("沙丘", 1, 20, None, "seeders")
+    assert provider.search_calls[0]["include_adult"] is True
+
+    provider = FakeProvider()
+    with adult_enabled_scope(False):
+        await make_service(provider, adult_enabled=True).search_torrents(
+            "沙丘", 1, 20, None, "seeders"
+        )
+    assert provider.search_calls[0]["include_adult"] is False
 
 
 async def test_search_rejects_empty_keyword() -> None:
@@ -294,9 +321,10 @@ async def test_config_status_reports_missing() -> None:
     status = await service.get_config_status()
 
     assert status["ready"] is False
-    assert "MTEAM_API_KEY" in status["missing"]
-    assert "QBITTORRENT_URL" in status["missing"]
+    assert "mteam.api_key" in status["missing"]
+    assert "qbittorrent.url" in status["missing"]
     assert status["pt_sites"][0]["connectivity"] is None
+    assert "adult" not in str(status).lower()
 
 
 async def test_config_status_active_checks() -> None:

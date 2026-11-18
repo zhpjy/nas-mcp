@@ -27,8 +27,9 @@ class PTProvider(ABC):
         page_size: int,
         categories: list[str] | None,
         sort_by: str,
+        include_adult: bool = False,
     ) -> SearchPage:
-        """搜索种子。"""
+        """搜索种子；include_adult=false 时不得返回成人内容。"""
 
     @abstractmethod
     async def download(self, torrent_id: str) -> TorrentFile:

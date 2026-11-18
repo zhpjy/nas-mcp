@@ -81,6 +81,9 @@ _ADULT_CATEGORY_IDS: frozenset[str] = frozenset(
 )
 
 _CATEGORY_NAMES: dict[str, str] = {category.id: category.name for category in CATEGORIES}
+_NORMAL_CATEGORY_IDS: tuple[str, ...] = tuple(
+    category.id for category in CATEGORIES if category.id not in _ADULT_CATEGORY_IDS
+)
 
 # 中文/英文别名到分类 ID 列表，避免模型必须知道数字分类。
 _CATEGORY_ALIASES: dict[str, tuple[str, ...]] = {
@@ -236,7 +239,7 @@ class MTeamProvider(PTProvider):
 
     def _require_enabled(self) -> None:
         if not self.enabled:
-            raise ProviderError("未配置 MTEAM_API_KEY，请先在 .env 中设置 M-Team API Key")
+            raise ProviderError("未配置 M-Team API Key，请在配置文件的 mteam.api_key 中设置")
 
     async def _post_json(self, path: str, payload: dict[str, Any]) -> Any:
         self._require_enabled()
@@ -299,8 +302,9 @@ class MTeamProvider(PTProvider):
         page_size: int,
         categories: list[str] | None,
         sort_by: str,
+        include_adult: bool = False,
     ) -> SearchPage:
-        category_ids, mode = self._resolve_categories(categories)
+        category_ids, mode = self._resolve_categories(categories, include_adult=include_adult)
         sort_key = _normalize_key(sort_by)
         sort_field = _SORT_FIELDS.get(sort_key)
         if sort_field is None:
@@ -322,12 +326,22 @@ class MTeamProvider(PTProvider):
 
         data = await self._post_json("torrent/search", body)
         raw_items, total, total_pages = self._extract_search_data(data, page_size)
-        items = tuple(
-            item
-            for raw in raw_items
-            if isinstance(raw, dict)
-            if (item := self._normalize_item(raw)) is not None
-        )
+        items: list[TorrentItem] = []
+        dropped = 0
+        for raw in raw_items:
+            if not isinstance(raw, dict):
+                continue
+            item = self._normalize_item(raw)
+            if item is None:
+                continue
+            if not include_adult and item.category not in _NORMAL_CATEGORY_IDS:
+                dropped += 1
+                continue
+            items.append(item)
+        if dropped:
+            # 上游分类过滤失效时仍不把成人条目交给调用方，并修正计数。
+            total = max(total - dropped, 0)
+            total_pages = math.ceil(total / page_size) if total > 0 else 0
         return SearchPage(
             site=self.id,
             keyword=keyword,
@@ -335,32 +349,47 @@ class MTeamProvider(PTProvider):
             page_size=page_size,
             total=total,
             total_pages=total_pages,
-            items=items,
+            items=tuple(items),
         )
 
-    def _resolve_categories(self, categories: list[str] | None) -> tuple[list[str], str]:
-        if not categories:
-            return [], "normal"
-
+    def _resolve_categories(
+        self,
+        categories: list[str] | None,
+        *,
+        include_adult: bool,
+    ) -> tuple[list[str], str]:
         selected: list[str] = []
         seen: set[str] = set()
-        for raw in categories:
-            key = _normalize_key(raw)
-            if not key:
-                continue
-            ids = _CATEGORY_LOOKUP.get(key)
-            if ids is None and key.isdigit() and key in _CATEGORY_NAMES:
-                ids = (key,)
-            if ids is None:
-                raise ProviderError(
-                    f"未知分类：{raw!r}。可使用电影、剧集、动画、纪录片、音乐、游戏、软件、"
-                    "电子书、体育、成人等名称，或直接传 M-Team 分类 ID"
-                )
-            for category_id in ids:
-                if category_id not in seen:
-                    seen.add(category_id)
-                    selected.append(category_id)
+        if categories:
+            for raw in categories:
+                key = _normalize_key(raw)
+                if not key:
+                    continue
+                ids = _CATEGORY_LOOKUP.get(key)
+                if ids is None and key.isdigit() and key in _CATEGORY_NAMES:
+                    ids = (key,)
+                if ids is None:
+                    raise ProviderError(
+                        f"未知分类：{raw!r}。可使用电影、剧集、动画、纪录片、音乐、游戏、软件、"
+                        "电子书、体育、成人等名称，或直接传 M-Team 分类 ID"
+                    )
+                for category_id in ids:
+                    if category_id not in seen:
+                        seen.add(category_id)
+                        selected.append(category_id)
 
+        if not include_adult:
+            # 关闭成人内容时直接去掉成人分类；删除后为空则按普通分类全选，
+            # 不向上游请求任何成人分类。
+            selected = [
+                category_id for category_id in selected if category_id not in _ADULT_CATEGORY_IDS
+            ]
+            if not selected:
+                selected = list(_NORMAL_CATEGORY_IDS)
+            return selected, "normal"
+
+        if not selected:
+            return [], "normal"
         has_adult = any(category_id in _ADULT_CATEGORY_IDS for category_id in selected)
         has_normal = any(category_id not in _ADULT_CATEGORY_IDS for category_id in selected)
         if has_adult and has_normal:
@@ -504,7 +533,7 @@ class MTeamProvider(PTProvider):
 
     async def check_connectivity(self) -> dict[str, Any]:
         if not self.enabled:
-            return {"ok": False, "message": "未配置 MTEAM_API_KEY"}
+            return {"ok": False, "message": "未配置 mteam.api_key"}
         try:
             await self._post_form("member/profile", {})
         except ProviderError as exc:

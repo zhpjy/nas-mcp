@@ -121,10 +121,158 @@ async def test_search_rejects_unknown_category() -> None:
         await provider.search("test", 1, 20, ["不存在的分类"], "seeders")
 
 
-async def test_search_rejects_mixed_adult_and_normal_categories() -> None:
+async def test_search_rejects_mixed_adult_and_normal_categories_when_adult_enabled() -> None:
     provider = make_provider(lambda _: httpx2.Response(200, json={"code": "0", "data": {}}))
     with pytest.raises(ProviderError, match="不能同时选择"):
-        await provider.search("test", 1, 20, ["电影", "成人"], "seeders")
+        await provider.search("test", 1, 20, ["电影", "成人"], "seeders", include_adult=True)
+
+
+async def test_search_removes_adult_category_when_disabled() -> None:
+    seen: list[dict[str, Any]] = []
+
+    def handler(request: httpx2.Request) -> httpx2.Response:
+        seen.append(json.loads(request.content))
+        return httpx2.Response(200, json={"code": "0", "data": {"data": []}})
+
+    await make_provider(handler).search("test", 1, 20, ["电影", "成人"], "seeders")
+
+    body = seen[0]
+    assert body["mode"] == "normal"
+    assert "419" in body["categories"]
+    assert not set(body["categories"]) & {"410", "424", "429", "430", "425", "433", "411"}
+
+
+async def test_search_adult_only_falls_back_to_normal_categories_when_disabled() -> None:
+    seen: list[dict[str, Any]] = []
+
+    def handler(request: httpx2.Request) -> httpx2.Response:
+        seen.append(json.loads(request.content))
+        return httpx2.Response(200, json={"code": "0", "data": {"data": []}})
+
+    await make_provider(handler).search("test", 1, 20, ["成人"], "seeders")
+
+    body = seen[0]
+    assert body["mode"] == "normal"
+    assert "410" not in body["categories"]
+    assert "419" in body["categories"]
+
+
+async def test_search_without_categories_uses_normal_categories_when_disabled() -> None:
+    seen: list[dict[str, Any]] = []
+
+    def handler(request: httpx2.Request) -> httpx2.Response:
+        seen.append(json.loads(request.content))
+        return httpx2.Response(200, json={"code": "0", "data": {"data": []}})
+
+    await make_provider(handler).search("test", 1, 20, None, "seeders")
+
+    body = seen[0]
+    assert body["mode"] == "normal"
+    assert "410" not in body["categories"]
+    assert "419" in body["categories"]
+
+
+async def test_search_adult_category_when_enabled() -> None:
+    seen: list[dict[str, Any]] = []
+
+    def handler(request: httpx2.Request) -> httpx2.Response:
+        seen.append(json.loads(request.content))
+        return httpx2.Response(200, json={"code": "0", "data": {"data": []}})
+
+    await make_provider(handler).search("test", 1, 20, ["成人"], "seeders", include_adult=True)
+
+    body = seen[0]
+    assert body["mode"] == "adult"
+    assert "410" in body["categories"]
+
+
+async def test_search_drops_adult_items_when_disabled() -> None:
+    def handler(_: httpx2.Request) -> httpx2.Response:
+        return httpx2.Response(
+            200,
+            json={
+                "code": "0",
+                "data": {
+                    "total": 2,
+                    "totalPages": 1,
+                    "data": [
+                        {
+                            "id": "1",
+                            "name": "Normal",
+                            "category": "419",
+                            "status": {"seeders": "1"},
+                        },
+                        {
+                            "id": "2",
+                            "name": "Adult",
+                            "category": "410",
+                            "status": {"seeders": "1"},
+                        },
+                    ],
+                },
+            },
+        )
+
+    page = await make_provider(handler).search("test", 1, 20, ["电影"], "seeders")
+
+    assert [item.id for item in page.items] == ["1"]
+    assert page.total == 1
+    assert page.total_pages == 1
+
+
+async def test_search_keeps_adult_items_when_enabled() -> None:
+    def handler(_: httpx2.Request) -> httpx2.Response:
+        return httpx2.Response(
+            200,
+            json={
+                "code": "0",
+                "data": {
+                    "total": 1,
+                    "data": [
+                        {
+                            "id": "2",
+                            "name": "Adult",
+                            "category": "410",
+                            "status": {"seeders": "1"},
+                        }
+                    ],
+                },
+            },
+        )
+
+    page = await make_provider(handler).search(
+        "test", 1, 20, ["成人"], "seeders", include_adult=True
+    )
+
+    assert [item.id for item in page.items] == ["2"]
+
+
+async def test_search_returns_empty_when_all_items_are_adult_and_disabled() -> None:
+    def handler(_: httpx2.Request) -> httpx2.Response:
+        return httpx2.Response(
+            200,
+            json={
+                "code": "0",
+                "data": {
+                    "total": 1,
+                    "totalPages": 1,
+                    "data": [
+                        {
+                            "id": "2",
+                            "name": "Adult",
+                            "category": "410",
+                            "status": {"seeders": "1"},
+                        }
+                    ],
+                },
+            },
+        )
+
+    page = await make_provider(handler).search("test", 1, 20, ["成人"], "seeders")
+
+    assert page.items == ()
+    assert page.total == 0
+    assert page.total_pages == 0
 
 
 async def test_download_fetches_token_and_torrent_without_api_key() -> None:
