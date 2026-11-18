@@ -43,6 +43,8 @@ download_torrents(torrent_ids: list[str], category: str | None = None) -> dict
 - 服务端从 M-Team 获取 `.torrent`，校验后直接上传 qBittorrent。
 - 返回每个 ID 的 `ok`、`hash`、`name`、`message`。
 - 支持批量，单个失败不会中断其他任务。
+- 下载链接过期、429/5xx 或网络中断时，服务端会自动重新申请链接并重试，最多 3 次；
+  仍失败才把错误返回给调用方。
 
 ## `list_download_categories`
 

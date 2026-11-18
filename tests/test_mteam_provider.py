@@ -9,6 +9,7 @@ import pytest
 
 from nas_mcp.config import MTeamConfig
 from nas_mcp.errors import ProviderError
+from nas_mcp.providers import mteam as mteam_module
 from nas_mcp.providers.mteam import MTeamProvider
 
 from .helpers import make_torrent
@@ -315,7 +316,11 @@ async def test_download_rejects_oversized_torrent() -> None:
         await make_provider(handler, max_torrent_bytes=10).download("123")
 
 
-async def test_download_rejects_non_torrent_content() -> None:
+async def test_download_rejects_non_torrent_content(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(mteam_module, "_DOWNLOAD_RETRY_DELAY", 0)
+
     def handler(request: httpx2.Request) -> httpx2.Response:
         if request.url.path == "/api/torrent/genDlToken":
             return httpx2.Response(200, json={"code": "0", "data": "https://download.example/t"})
@@ -323,6 +328,83 @@ async def test_download_rejects_non_torrent_content() -> None:
 
     with pytest.raises(ProviderError, match="错误信息"):
         await make_provider(handler).download("123")
+
+
+async def test_download_retries_network_error(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr(mteam_module, "_DOWNLOAD_RETRY_DELAY", 0)
+    content, expected_hash = make_torrent()
+    download_calls = 0
+
+    def handler(request: httpx2.Request) -> httpx2.Response:
+        nonlocal download_calls
+        if request.url.path == "/api/torrent/genDlToken":
+            return httpx2.Response(200, json={"code": "0", "data": "https://download.example/t"})
+        download_calls += 1
+        if download_calls == 1:
+            raise httpx2.ConnectError("")
+        return httpx2.Response(200, content=content)
+
+    torrent = await make_provider(handler).download("123")
+
+    assert torrent.infohash == expected_hash
+    assert download_calls == 2
+
+
+async def test_download_retries_expired_link(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr(mteam_module, "_DOWNLOAD_RETRY_DELAY", 0)
+    content, _ = make_torrent()
+    token_calls = 0
+    download_calls = 0
+
+    def handler(request: httpx2.Request) -> httpx2.Response:
+        nonlocal token_calls, download_calls
+        if request.url.path == "/api/torrent/genDlToken":
+            token_calls += 1
+            return httpx2.Response(200, json={"code": "0", "data": "https://download.example/t"})
+        download_calls += 1
+        if download_calls == 1:
+            return httpx2.Response(403, content=b"expired")
+        return httpx2.Response(200, content=content)
+
+    torrent = await make_provider(handler).download("123")
+
+    assert torrent.content == content
+    assert token_calls == 2
+
+
+async def test_download_retries_then_reports_readable_error(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(mteam_module, "_DOWNLOAD_RETRY_DELAY", 0)
+    calls = 0
+
+    def handler(request: httpx2.Request) -> httpx2.Response:
+        nonlocal calls
+        calls += 1
+        raise httpx2.ConnectError("")
+
+    with pytest.raises(ProviderError, match="连接失败") as excinfo:
+        await make_provider(handler).download("123")
+
+    assert "已自动重试 3 次" in str(excinfo.value)
+    assert calls == 3
+
+
+async def test_download_does_not_retry_client_error(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr(mteam_module, "_DOWNLOAD_RETRY_DELAY", 0)
+    download_calls = 0
+
+    def handler(request: httpx2.Request) -> httpx2.Response:
+        nonlocal download_calls
+        if request.url.path == "/api/torrent/genDlToken":
+            return httpx2.Response(200, json={"code": "0", "data": "https://download.example/t"})
+        download_calls += 1
+        return httpx2.Response(404)
+
+    with pytest.raises(ProviderError, match="HTTP 404"):
+        await make_provider(handler).download("123")
+
+    assert download_calls == 1
 
 
 async def test_check_connectivity() -> None:

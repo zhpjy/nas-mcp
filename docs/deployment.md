@@ -41,7 +41,7 @@ docker compose exec nas-mcp nas-mcp --check
 无需另配仓库密码。镜像名为 `ghcr.io/<owner>/nas-mcp`，支持 `linux/amd64` 和 `linux/arm64`。
 
 - 推送 `main`：发布 `main`、`latest` 和对应提交的 `sha-...` 标签。
-- 推送版本标签，例如 `v0.2.1`：发布 `0.2.1`、`0.2` 和对应提交标签。
+- 推送版本标签，例如 `v0.2.2`：发布 `0.2.2`、`0.2` 和对应提交标签。
 - Pull request：仅构建，不推送镜像。
 
 版本标签还会触发 `.github/workflows/release.yml`，运行测试并把 sdist、wheel 上传到
@@ -59,7 +59,7 @@ GitHub Release，可直接配合 `uvx` 使用，见 [README](../README.md#用-uv
 ```yaml
 services:
   nas-mcp:
-    image: ghcr.io/<owner>/nas-mcp:0.2.1
+    image: ghcr.io/<owner>/nas-mcp:0.2.2
     restart: unless-stopped
     init: true
     command: ["--transport", "streamable-http", "--host", "0.0.0.0", "--port", "8000"]

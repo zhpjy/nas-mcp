@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 import math
 import re
 from collections.abc import AsyncIterator
@@ -19,6 +20,35 @@ from .base import PTProvider
 
 _USER_AGENT = "nas-mcp/0.1"
 _TORRENT_ID = re.compile(r"^[0-9]{1,20}$")
+# 下载链路的自动重试次数与退避基数（秒）
+_DOWNLOAD_ATTEMPTS = 3
+_DOWNLOAD_RETRY_DELAY = 0.5
+
+
+class _RetryableDownloadError(ProviderError):
+    """下载链路的瞬时错误，由服务端重试，不透传给 agent。"""
+
+
+_HTTP_ERROR_LABELS = {
+    "ConnectError": "连接失败",
+    "ConnectTimeout": "连接超时",
+    "ReadTimeout": "读取超时",
+    "WriteTimeout": "写入超时",
+    "PoolTimeout": "连接池超时",
+    "ReadError": "读取中断",
+    "WriteError": "写入中断",
+    "RemoteProtocolError": "服务器中断连接",
+    "ProxyError": "代理连接失败",
+}
+
+
+def _describe_http_error(exc: httpx2.HTTPError) -> str:
+    """httpx2 的网络异常经常没有 message，补一个可读描述。"""
+    message = str(exc).strip()
+    if message:
+        return message
+    return _HTTP_ERROR_LABELS.get(type(exc).__name__, type(exc).__name__)
+
 
 # M-Team 分类 ID，来源为站点公开分类定义。
 CATEGORIES: tuple[Category, ...] = (
@@ -259,15 +289,6 @@ class MTeamProvider(PTProvider):
             raise ProviderError(f"M-Team 请求失败：{exc}") from exc
         return self._parse_response(response, "M-Team API 请求失败")
 
-    async def _post_query(self, path: str, params: dict[str, Any]) -> Any:
-        self._require_enabled()
-        try:
-            async with self._api_client() as client:
-                response = await client.post(path, params=params)
-        except httpx2.HTTPError as exc:
-            raise ProviderError(f"M-Team 请求失败：{exc}") from exc
-        return self._parse_response(response, "M-Team API 请求失败")
-
     @staticmethod
     def _parse_response(response: httpx2.Response, context: str) -> Any:
         if response.status_code in {401, 403}:
@@ -466,8 +487,30 @@ class MTeamProvider(PTProvider):
     async def download(self, torrent_id: str) -> TorrentFile:
         self._require_enabled()
         self.validate_torrent_id(torrent_id)
+        last_error: ProviderError | None = None
+        for attempt in range(1, _DOWNLOAD_ATTEMPTS + 1):
+            try:
+                return await self._download_once(torrent_id)
+            except _RetryableDownloadError as exc:
+                last_error = exc
+                if attempt < _DOWNLOAD_ATTEMPTS:
+                    # 临时链接过期或网络抖动时，重新申请链接再试
+                    await asyncio.sleep(_DOWNLOAD_RETRY_DELAY * attempt)
+        assert last_error is not None
+        raise ProviderError(f"{last_error}（已自动重试 {_DOWNLOAD_ATTEMPTS} 次）") from last_error
+
+    async def _download_once(self, torrent_id: str) -> TorrentFile:
         # 站点同时接受 query/form，多客户端实现中 query 方式最稳定。
-        token_data = await self._post_query("torrent/genDlToken", {"id": torrent_id})
+        try:
+            async with self._api_client() as client:
+                response = await client.post("torrent/genDlToken", params={"id": torrent_id})
+        except httpx2.HTTPError as exc:
+            raise _RetryableDownloadError(
+                f"获取 M-Team 下载链接失败：{_describe_http_error(exc)}"
+            ) from exc
+        if response.status_code == 429 or response.status_code >= 500:
+            raise _RetryableDownloadError(f"获取 M-Team 下载链接失败：HTTP {response.status_code}")
+        token_data = self._parse_response(response, "M-Team API 请求失败")
         download_url = self._extract_download_url(token_data)
         if not download_url:
             raise ProviderError("M-Team 未返回种子下载地址")
@@ -491,8 +534,12 @@ class MTeamProvider(PTProvider):
                 ) as response,
             ):
                 if response.status_code in {401, 403}:
-                    raise ProviderError(
+                    raise _RetryableDownloadError(
                         f"下载 M-Team 种子失败：HTTP {response.status_code}，临时链接可能已过期"
+                    )
+                if response.status_code == 429 or response.status_code >= 500:
+                    raise _RetryableDownloadError(
+                        f"下载 M-Team 种子失败：HTTP {response.status_code}"
                     )
                 if response.status_code >= 400:
                     raise ProviderError(f"下载 M-Team 种子失败：HTTP {response.status_code}")
@@ -515,10 +562,13 @@ class MTeamProvider(PTProvider):
                     chunks.append(chunk)
                 content = b"".join(chunks)
         except httpx2.HTTPError as exc:
-            raise ProviderError(f"下载 M-Team 种子失败：{exc}") from exc
+            raise _RetryableDownloadError(
+                f"下载 M-Team 种子失败：{_describe_http_error(exc)}"
+            ) from exc
 
         if content.lstrip().startswith(b"{"):
-            raise ProviderError("M-Team 返回的是错误信息而不是种子文件，请稍后重试")
+            # 链接失效时上游可能用 200 返回 JSON 错误，重新申请链接再试
+            raise _RetryableDownloadError("M-Team 返回的是错误信息而不是种子文件")
         try:
             metadata = validate_torrent(content)
         except BencodeError as exc:
