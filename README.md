@@ -8,19 +8,27 @@
 - 下载器：qBittorrent 4.x / 5.x（WebUI API）
 - HTTP access key：每个 key 可单独设置成人内容权限，默认不启用成人内容
 
-## 快速开始
+## 快速开始（Docker）
 
-要求 Python 3.12+、[uv](https://docs.astral.sh/uv/)。
+需要 Docker 和 Docker Compose。
 
 ```bash
-uv sync
+git clone https://github.com/zhpjy/nas-mcp.git
+cd nas-mcp
 cp config.example.yaml config.yaml
-chmod 600 config.yaml
+chmod 644 config.yaml   # 容器内以 uid 10001 运行，需要可读
 # 编辑 config.yaml，填入 mteam.api_key 和 qbittorrent 配置
-uv run nas-mcp --check
+docker compose up -d --build
+docker compose exec nas-mcp nas-mcp --check
 ```
 
-默认读取工作目录下的 `config.yaml`，也可以用 `--config /path/to/config.yaml` 指定。
+`compose.yaml` 以 `streamable-http` 监听容器内 `0.0.0.0:8000`，默认只映射到宿主机
+`127.0.0.1:8000`，客户端连接 `http://127.0.0.1:8000/mcp`。需要局域网直连或使用已发布镜像时，
+见 [Docker 部署](docs/deployment.md)。
+
+qBittorrent 在宿主机上时，`qbittorrent.url` 要填 `http://host.docker.internal:8080`；
+容器内的 `127.0.0.1` 指容器自身。
+
 `--check` 会检查配置并尝试连接 M-Team 和 qBittorrent。
 
 ## 用 uvx 运行
@@ -71,15 +79,20 @@ uvx --from https://github.com/zhpjy/nas-mcp/releases/download/v0.2.4/nas_mcp-0.2
 `uvx nas-mcp` 默认是 `streamable-http`；本地 MCP 客户端需要 stdio 时加 `--transport stdio`。
 升级时把命令中的版本号换成新版本。
 
-## 运行
+## 本地运行（uv）
 
-默认使用 `streamable-http`：
+要求 Python 3.12+、[uv](https://docs.astral.sh/uv/)。
 
 ```bash
+uv sync
+cp config.example.yaml config.yaml
+chmod 600 config.yaml
+# 编辑 config.yaml，填入 mteam.api_key 和 qbittorrent 配置
+uv run nas-mcp --check
 uv run nas-mcp
 ```
 
-客户端连接 `http://<host>:8000/mcp`。配置了 `access_keys` 后，HTTP 请求需要携带
+默认使用 `streamable-http`，客户端连接 `http://<host>:8000/mcp`。配置了 `access_keys` 后，HTTP 请求需要携带
 `Authorization: Bearer <access-key>`；未配置时不做客户端认证，远程访问请自行加认证和网络隔离。
 
 本地客户端需要 stdio 时：
