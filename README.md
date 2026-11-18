@@ -29,14 +29,14 @@ uv run nas-mcp --check
 并挂到 GitHub Release，用 `uvx` 直接安装：
 
 ```bash
-uvx --from https://github.com/<owner>/nas-mcp/releases/download/v0.1.0/nas_mcp-0.1.0-py3-none-any.whl \
+uvx --from https://github.com/zhpjy/nas-mcp/releases/download/v0.1.0/nas_mcp-0.1.0-py3-none-any.whl \
   nas-mcp --check
 ```
 
 也可以从 Git 源码运行（需要本机有 `git`）：
 
 ```bash
-uvx --from git+https://github.com/<owner>/nas-mcp nas-mcp --transport stdio
+uvx --from git+https://github.com/zhpjy/nas-mcp nas-mcp --transport stdio
 ```
 
 `uvx` 会在任意工作目录启动，配置文件按以下顺序查找：

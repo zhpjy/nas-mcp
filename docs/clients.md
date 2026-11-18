@@ -17,7 +17,7 @@ wheel 由 GitHub Release 提供，客户端直接把 uvx 命令写进配置即�
       "command": [
         "uvx",
         "--from",
-        "https://github.com/<owner>/nas-mcp/releases/download/v0.1.0/nas_mcp-0.1.0-py3-none-any.whl",
+        "https://github.com/zhpjy/nas-mcp/releases/download/v0.1.0/nas_mcp-0.1.0-py3-none-any.whl",
         "nas-mcp",
         "--transport",
         "stdio"
@@ -37,7 +37,7 @@ Claude Desktop 使用相同的命令：
       "command": "uvx",
       "args": [
         "--from",
-        "https://github.com/<owner>/nas-mcp/releases/download/v0.1.0/nas_mcp-0.1.0-py3-none-any.whl",
+        "https://github.com/zhpjy/nas-mcp/releases/download/v0.1.0/nas_mcp-0.1.0-py3-none-any.whl",
         "nas-mcp",
         "--transport",
         "stdio"
@@ -48,7 +48,7 @@ Claude Desktop 使用相同的命令：
 ```
 
 升级时替换 URL 中的版本号和文件名版本，参考
-[GitHub Releases](https://github.com/<owner>/nas-mcp/releases)。
+[GitHub Releases](https://github.com/zhpjy/nas-mcp/releases)。
 
 ## opencode：本地 stdio
 
